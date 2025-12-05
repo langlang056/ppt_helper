@@ -6,10 +6,10 @@ from functools import lru_cache
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # API Keys
-    llama_cloud_api_key: str = ""  # 可选,如果为空则使用 PyPDF2 本地解析
-    anthropic_api_key: str = ""
-    gemini_api_key: str = ""
+    # API Keys (与老项目相同的命名)
+    llama_cloud_api_key: str = ""  # 可选,如果为空则使用 PyPDF2
+    google_api_key: str = ""  # Google Gemini API Key (与老项目相同)
+    google_model: str = "gemini-2.0-flash-exp"  # Gemini 模型
 
     # Paths
     upload_dir: str = "uploads"
@@ -26,11 +26,8 @@ class Settings(BaseSettings):
     supported_formats: list[str] = [".pdf"]
 
     # LLM Settings
-    llm_provider: str = "gemini"  # "anthropic" or "gemini"
-    claude_model: str = "claude-3-5-sonnet-20241022"
-    gemini_model: str = "gemini-2.5-flash"
-    max_tokens: int = 4096
-    temperature: float = 0.3
+    max_tokens: int = 2000
+    temperature: float = 0.7
 
     class Config:
         env_file = ".env"
