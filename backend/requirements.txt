@@ -3,8 +3,9 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
-# PDF Processing (仅使用 PyPDF2 本地解析)
-PyPDF2==3.0.1
+# PDF Processing (使用 PyMuPDF 进行图像提取)
+PyMuPDF==1.23.8
+Pillow==10.2.0
 
 # LLM Provider (仅 Gemini)
 google-generativeai==0.8.3

@@ -9,10 +9,11 @@ export default function ExplanationPanel() {
     pdfId,
     currentPage,
     explanations,
-    isLoadingExplanation,
+    loadingPages,
+    pageErrors,
     setExplanation,
-    setIsLoadingExplanation,
-    setError,
+    setPageLoading,
+    setPageError,
   } = usePdfStore();
 
   // 当页面切换时,加载解释
@@ -24,19 +25,25 @@ export default function ExplanationPanel() {
       return;
     }
 
+    // 检查是否正在加载
+    if (loadingPages.has(currentPage)) {
+      return;
+    }
+
     // 加载解释
     const loadExplanation = async () => {
-      setIsLoadingExplanation(true);
-      setError(null);
+      setPageLoading(currentPage, true);
+      setPageError(currentPage, null);
 
       try {
         const explanation = await getExplanation(pdfId, currentPage);
         setExplanation(currentPage, explanation);
       } catch (error: any) {
         console.error('加载解释失败:', error);
-        setError(error.response?.data?.detail || '加载解释失败');
+        const errorMsg = error.response?.data?.detail || '加载解释失败';
+        setPageError(currentPage, errorMsg);
       } finally {
-        setIsLoadingExplanation(false);
+        setPageLoading(currentPage, false);
       }
     };
 
@@ -44,6 +51,8 @@ export default function ExplanationPanel() {
   }, [pdfId, currentPage]);
 
   const currentExplanation = explanations.get(currentPage);
+  const isLoadingCurrentPage = loadingPages.has(currentPage);
+  const currentPageError = pageErrors.get(currentPage);
 
   if (!pdfId) {
     return (
@@ -55,12 +64,23 @@ export default function ExplanationPanel() {
     );
   }
 
-  if (isLoadingExplanation) {
+  if (isLoadingCurrentPage) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="animate-spin h-8 w-8 border-2 border-black border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-500">正在生成解释...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentPageError) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center px-4">
+          <p className="text-red-500 mb-2">加载失败</p>
+          <p className="text-gray-600 text-sm">{currentPageError}</p>
         </div>
       </div>
     );

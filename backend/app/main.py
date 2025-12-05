@@ -178,51 +178,39 @@ async def get_explanation(
     # if cached:
     #     return cached
 
-    # Parse the page
+    # Parse the page as image
     try:
-        page_text = await pdf_parser.parse_single_page(pdf_doc.file_path, page_number)
+        page_image = await pdf_parser.parse_single_page(pdf_doc.file_path, page_number)
 
-        # Use LLM to generate explanation
+        # Use LLM Vision to generate explanation
         from app.services.llm_service import llm_service
         from app.models.schemas import PageContent, KeyPoint
         import json
 
-        # Create prompt for LLM
-        system_message = """你是一个优秀的大学课程讲解助手。你的任务是将复杂的学术内容转化为通俗易懂的中文解释。
+        # Create prompt for LLM Vision（简化以减少token消耗）
+        system_message = """你是大学课程讲解助手。分析PPT图像，用中文通俗解释。
 
-请分析提供的课件页面内容,并按以下 JSON 格式返回:
+返回JSON格式:
 {
-  "page_type": "TITLE 或 CONTENT 或 END",
-  "summary": "页面内容的简洁中文摘要(2-3句话)",
-  "key_points": [
-    {
-      "concept": "核心概念名称",
-      "explanation": "用通俗语言解释这个概念",
-      "is_important": true 或 false
-    }
-  ],
-  "analogy": "用日常生活中的类比来解释核心内容",
-  "example": "一个具体的例子来说明概念",
-  "original_language": "en 或 fr 或 zh 或 mixed"
+  "page_type": "TITLE/CONTENT/END",
+  "summary": "简洁摘要(2-3句)",
+  "key_points": [{"concept": "概念", "explanation": "通俗解释", "is_important": true}],
+  "analogy": "生活类比(可选)",
+  "example": "具体例子(可选)",
+  "original_language": "en/zh/mixed"
 }
 
-注意:
-1. 如果是标题页/封面,page_type 为 "TITLE"
-2. 如果是结束页/参考文献,page_type 为 "END"
-3. 类比要贴近生活,容易理解
-4. 关键概念要抓住最重要的 2-3 个"""
+要求: 抓住2-3个关键概念，解释简洁清晰。"""
 
-        user_prompt = f"""请分析以下课件第 {page_number} 页的内容,并生成中文讲解:
+        user_prompt = f"""分析第{page_number}页，返回完整JSON，不要截断。"""
 
-{page_text}
-
-请严格按照 JSON 格式返回结果。"""
-
-        # Generate explanation with LLM
-        llm_response = await llm_service.generate_text(
+        # Generate explanation with LLM Vision (增加token限制)
+        llm_response = await llm_service.analyze_image(
+            image=page_image,
             prompt=user_prompt,
             system_message=system_message,
             temperature=0.3,
+            max_tokens=20000,  # 增加到20000以避免截断
         )
 
         # Parse LLM response
@@ -257,6 +245,27 @@ async def get_explanation(
                 if start_idx != -1 and end_idx != -1:
                     response_text = response_text[start_idx:end_idx+1]
                     print(f"✅ Extracted JSON object from text")
+
+            # 如果JSON被截断（没有结束的}），尝试修复
+            if response_text.startswith("{") and not response_text.rstrip().endswith("}"):
+                print(f"⚠️ JSON可能被截断，尝试修复...")
+                # 找到最后一个完整的字段
+                # 简单策略：补上缺失的引号和括号
+                response_text = response_text.rstrip()
+                # 如果最后是逗号，去掉
+                if response_text.endswith(","):
+                    response_text = response_text[:-1]
+                # 补上缺失的引号
+                if response_text.count('"') % 2 != 0:
+                    response_text += '"'
+                # 补上缺失的括号
+                open_braces = response_text.count("{")
+                close_braces = response_text.count("}")
+                response_text += "}" * (open_braces - close_braces)
+                open_brackets = response_text.count("[")
+                close_brackets = response_text.count("]")
+                response_text += "]" * (open_brackets - close_brackets)
+                print(f"✅ 修复后的JSON长度: {len(response_text)}")
 
             print(f"📝 Parsing JSON (length: {len(response_text)})")
             llm_data = json.loads(response_text)

@@ -29,11 +29,12 @@ interface PdfState {
   // 解释缓存
   explanations: Map<number, PageExplanation>;
 
-  // 加载状态
+  // 加载状态（按页面跟踪）
   isUploading: boolean;
-  isLoadingExplanation: boolean;
+  loadingPages: Set<number>;
 
-  // 错误状态
+  // 错误状态（按页面跟踪）
+  pageErrors: Map<number, string>;
   error: string | null;
 
   // Actions
@@ -42,7 +43,8 @@ interface PdfState {
   setCurrentPage: (page: number) => void;
   setExplanation: (page: number, explanation: PageExplanation) => void;
   setIsUploading: (isUploading: boolean) => void;
-  setIsLoadingExplanation: (isLoading: boolean) => void;
+  setPageLoading: (page: number, isLoading: boolean) => void;
+  setPageError: (page: number, error: string | null) => void;
   setError: (error: string | null) => void;
   reset: () => void;
 }
@@ -56,7 +58,8 @@ export const usePdfStore = create<PdfState>((set) => ({
   currentPage: 1,
   explanations: new Map(),
   isUploading: false,
-  isLoadingExplanation: false,
+  loadingPages: new Set(),
+  pageErrors: new Map(),
   error: null,
 
   // Actions
@@ -76,8 +79,27 @@ export const usePdfStore = create<PdfState>((set) => ({
 
   setIsUploading: (isUploading) => set({ isUploading }),
 
-  setIsLoadingExplanation: (isLoading) =>
-    set({ isLoadingExplanation: isLoading }),
+  setPageLoading: (page, isLoading) =>
+    set((state) => {
+      const newLoadingPages = new Set(state.loadingPages);
+      if (isLoading) {
+        newLoadingPages.add(page);
+      } else {
+        newLoadingPages.delete(page);
+      }
+      return { loadingPages: newLoadingPages };
+    }),
+
+  setPageError: (page, error) =>
+    set((state) => {
+      const newPageErrors = new Map(state.pageErrors);
+      if (error) {
+        newPageErrors.set(page, error);
+      } else {
+        newPageErrors.delete(page);
+      }
+      return { pageErrors: newPageErrors };
+    }),
 
   setError: (error) => set({ error }),
 
@@ -90,7 +112,8 @@ export const usePdfStore = create<PdfState>((set) => ({
       currentPage: 1,
       explanations: new Map(),
       isUploading: false,
-      isLoadingExplanation: false,
+      loadingPages: new Set(),
+      pageErrors: new Map(),
       error: null,
     }),
 }));
