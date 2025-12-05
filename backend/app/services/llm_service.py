@@ -2,6 +2,7 @@
 import google.generativeai as genai
 from app.config import get_settings
 from PIL import Image
+from typing import List, Optional
 
 settings = get_settings()
 
@@ -16,6 +17,19 @@ SAFETY_SETTINGS = [
     ]
 ]
 
+# 改进的提示词模板（参考老项目）
+DEFAULT_PROMPT_TEMPLATE = """请作为一名专业的教师,详细分析这一页课件的内容。
+
+请包括以下内容:
+1. **主题概述**: 这一页的主要主题是什么?
+2. **核心概念**: 列出并解释页面上的关键概念、定义或术语
+3. **公式和图表**: 如果有数学公式、图表或图示,请详细解释它们的含义
+4. **重点难点**: 指出这一页中学生可能难以理解的部分
+5. **知识点总结**: 用简洁的语言总结这一页的要点
+6. **与前文联系**: 如果提供了前面页面的信息,请说明这一页如何承接或深化前面的内容
+
+请用清晰、易懂的中文回答,就像在给学生讲解一样。使用Markdown格式输出。"""
+
 
 class GeminiService:
     """Gemini Vision 服务"""
@@ -26,19 +40,60 @@ class GeminiService:
 
         genai.configure(api_key=settings.google_api_key)
         self.model = genai.GenerativeModel(settings.google_model)
+        self.prompt_template = DEFAULT_PROMPT_TEMPLATE
         print(f"✅ Gemini 已初始化: {settings.google_model}")
+
+    def extract_summary(self, analysis_text: str, page_num: int) -> str:
+        """
+        从分析结果中提取关键摘要
+        
+        Args:
+            analysis_text: 完整的分析文本
+            page_num: 页码
+            
+        Returns:
+            摘要文本
+        """
+        # 提取前200个字符作为摘要
+        lines = analysis_text.split('\n')
+        summary_lines = []
+        char_count = 0
+        
+        for line in lines:
+            if char_count > 200:
+                break
+            if line.strip() and not line.startswith('#'):
+                summary_lines.append(line.strip())
+                char_count += len(line)
+        
+        summary = ' '.join(summary_lines)[:200]
+        return f"[第{page_num}页摘要] {summary}"
+
+    def build_context_string(self, previous_summaries: List[str]) -> str:
+        """构建上下文字符串"""
+        if not previous_summaries:
+            return ""
+        
+        context = "\n".join(previous_summaries)
+        return f"\n\n📚 前面页面的内容概要:\n{context}\n"
 
     async def analyze_image(
         self,
         image: Image.Image,
-        prompt: str,
-        system_message: str = None,
+        page_num: int,
+        previous_summaries: Optional[List[str]] = None,
         temperature: float = 0.7,
         max_tokens: int = 2000,
     ) -> str:
-        """分析图像并生成解释"""
-        # 合并 system message 和 prompt
-        full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
+        """分析图像并生成Markdown格式解释"""
+        
+        # 构建提示词
+        prompt = f"【第 {page_num} 页】\n\n{self.prompt_template}"
+        
+        # 添加前面页面的上下文
+        if previous_summaries:
+            context_str = self.build_context_string(previous_summaries)
+            prompt += context_str
 
         # 生成配置
         config = genai.GenerationConfig(
@@ -48,7 +103,7 @@ class GeminiService:
 
         try:
             response = self.model.generate_content(
-                [full_prompt, image],
+                [prompt, image],
                 generation_config=config,
                 safety_settings=SAFETY_SETTINGS,
             )

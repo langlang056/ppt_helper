@@ -1,7 +1,12 @@
 'use client';
 
+// Polyfill must be imported first
+import '@/lib/polyfills';
+
 import { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
+import 'react-pdf/dist/Page/TextLayer.css';
 import { usePdfStore } from '@/store/pdfStore';
 
 // 配置 PDF.js worker

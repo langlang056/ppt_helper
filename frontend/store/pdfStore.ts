@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 
+// 新的 Markdown 格式解释
+export interface PageExplanationMarkdown {
+  page_number: number;
+  markdown_content: string;
+  summary: string;
+}
+
+// 保留旧接口以保持兼容
 export interface PageExplanation {
   page_number: number;
   page_type: string;
@@ -16,6 +24,15 @@ export interface PageExplanation {
   original_language: string;
 }
 
+// 处理进度
+export interface ProcessingProgress {
+  pdf_id: string;
+  total_pages: number;
+  processed_pages: number;
+  status: string;
+  progress_percentage: number;
+}
+
 interface PdfState {
   // PDF 信息
   pdfId: string | null;
@@ -26,8 +43,13 @@ interface PdfState {
   // 当前页面
   currentPage: number;
 
-  // 解释缓存
-  explanations: Map<number, PageExplanation>;
+  // 解释缓存（改用 Markdown 格式）
+  explanations: Map<number, PageExplanationMarkdown>;
+
+  // 处理进度
+  processingStatus: string;
+  processedPages: number;
+  progressPercentage: number;
 
   // 加载状态（按页面跟踪）
   isUploading: boolean;
@@ -41,7 +63,8 @@ interface PdfState {
   setPdfFile: (file: File) => void;
   setPdfInfo: (pdfId: string, totalPages: number, filename: string) => void;
   setCurrentPage: (page: number) => void;
-  setExplanation: (page: number, explanation: PageExplanation) => void;
+  setExplanation: (page: number, explanation: PageExplanationMarkdown) => void;
+  setProgress: (status: string, processedPages: number, progressPercentage: number) => void;
   setIsUploading: (isUploading: boolean) => void;
   setPageLoading: (page: number, isLoading: boolean) => void;
   setPageError: (page: number, error: string | null) => void;
@@ -57,6 +80,9 @@ export const usePdfStore = create<PdfState>((set) => ({
   filename: '',
   currentPage: 1,
   explanations: new Map(),
+  processingStatus: 'pending',
+  processedPages: 0,
+  progressPercentage: 0,
   isUploading: false,
   loadingPages: new Set(),
   pageErrors: new Map(),
@@ -76,6 +102,9 @@ export const usePdfStore = create<PdfState>((set) => ({
       newExplanations.set(page, explanation);
       return { explanations: newExplanations };
     }),
+
+  setProgress: (status, processedPages, progressPercentage) =>
+    set({ processingStatus: status, processedPages, progressPercentage }),
 
   setIsUploading: (isUploading) => set({ isUploading }),
 
@@ -111,6 +140,9 @@ export const usePdfStore = create<PdfState>((set) => ({
       filename: '',
       currentPage: 1,
       explanations: new Map(),
+      processingStatus: 'pending',
+      processedPages: 0,
+      progressPercentage: 0,
       isUploading: false,
       loadingPages: new Set(),
       pageErrors: new Map(),

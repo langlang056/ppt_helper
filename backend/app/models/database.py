@@ -1,5 +1,5 @@
 """Database models and session management."""
-from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from datetime import datetime
@@ -18,6 +18,9 @@ class PDFDocument(Base):
     total_pages = Column(Integer, nullable=False)
     file_path = Column(String, nullable=False)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+    # 处理状态
+    processing_status = Column(String, default="pending")  # pending, processing, completed, failed
+    processed_pages = Column(Integer, default=0)  # 已处理的页数
 
 
 class PageExplanationCache(Base):
@@ -29,7 +32,8 @@ class PageExplanationCache(Base):
     pdf_id = Column(String, nullable=False, index=True)
     page_number = Column(Integer, nullable=False)
     page_type = Column(String, default="CONTENT")
-    explanation_json = Column(Text, nullable=False)  # Stored as JSON string
+    explanation_json = Column(Text, nullable=False)  # Stored as JSON string (now Markdown)
+    summary = Column(Text, nullable=True)  # 页面摘要，用于上下文传递
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -1,20 +1,51 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { usePdfStore } from '@/store/pdfStore';
-import { getExplanation } from '@/lib/api';
+import { getExplanation, getProgress, downloadMarkdown } from '@/lib/api';
 
 export default function ExplanationPanel() {
   const {
     pdfId,
+    filename,
     currentPage,
+    totalPages,
     explanations,
+    processingStatus,
+    processedPages,
+    progressPercentage,
     loadingPages,
     pageErrors,
     setExplanation,
+    setProgress,
     setPageLoading,
     setPageError,
   } = usePdfStore();
+
+  // 轮询处理进度
+  useEffect(() => {
+    if (!pdfId) return;
+    if (processingStatus === 'completed') return;
+
+    const pollProgress = async () => {
+      try {
+        const progress = await getProgress(pdfId);
+        setProgress(progress.status, progress.processed_pages, progress.progress_percentage);
+      } catch (error) {
+        console.error('获取进度失败:', error);
+      }
+    };
+
+    // 立即获取一次
+    pollProgress();
+
+    // 每 3 秒轮询一次
+    const interval = setInterval(pollProgress, 3000);
+
+    return () => clearInterval(interval);
+  }, [pdfId, processingStatus, setProgress]);
 
   // 当页面切换时,加载解释
   useEffect(() => {
@@ -48,7 +79,19 @@ export default function ExplanationPanel() {
     };
 
     loadExplanation();
-  }, [pdfId, currentPage]);
+  }, [pdfId, currentPage, explanations, loadingPages, setExplanation, setPageLoading, setPageError]);
+
+  // 下载处理
+  const handleDownload = useCallback(async () => {
+    if (!pdfId || !filename) return;
+    
+    try {
+      await downloadMarkdown(pdfId, filename.replace('.pdf', ''));
+    } catch (error: any) {
+      console.error('下载失败:', error);
+      alert(error.response?.data?.detail || '下载失败');
+    }
+  }, [pdfId, filename]);
 
   const currentExplanation = explanations.get(currentPage);
   const isLoadingCurrentPage = loadingPages.has(currentPage);
@@ -64,134 +107,128 @@ export default function ExplanationPanel() {
     );
   }
 
-  if (isLoadingCurrentPage) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin h-8 w-8 border-2 border-black border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">正在生成解释...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentPageError) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center px-4">
-          <p className="text-red-500 mb-2">加载失败</p>
-          <p className="text-gray-600 text-sm">{currentPageError}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!currentExplanation) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-gray-400">暂无解释</p>
-      </div>
-    );
-  }
-
-  // 检查内容是否与摘要重复
-  const isContentDuplicate =
-    currentExplanation.content.key_points.length === 1 &&
-    currentExplanation.content.key_points[0].explanation ===
-      currentExplanation.content.summary;
-
   return (
-    <div className="h-full overflow-auto p-6">
-      {/* 页面类型标签 */}
-      <div className="mb-4">
-        <span className="px-3 py-1 text-xs border border-black bg-white">
-          页面 {currentExplanation.page_number} · {currentExplanation.page_type}
-        </span>
+    <div className="h-full flex flex-col">
+      {/* 顶部工具栏：进度和下载 */}
+      <div className="p-4 border-b border-gray-200 bg-gray-50">
+        {/* 进度条 */}
+        <div className="mb-3">
+          <div className="flex justify-between text-sm text-gray-600 mb-1">
+            <span>
+              处理进度: {processedPages}/{totalPages} 页
+              {processingStatus === 'processing' && ' (处理中...)'}
+              {processingStatus === 'completed' && ' ✅'}
+              {processingStatus === 'failed' && ' ❌'}
+            </span>
+            <span>{progressPercentage}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className={`h-2 rounded-full transition-all duration-300 ${
+                processingStatus === 'completed'
+                  ? 'bg-green-500'
+                  : processingStatus === 'failed'
+                  ? 'bg-red-500'
+                  : 'bg-blue-500'
+              }`}
+              style={{ width: `${progressPercentage}%` }}
+            />
+          </div>
+        </div>
+
+        {/* 下载按钮 */}
+        <button
+          onClick={handleDownload}
+          disabled={processingStatus !== 'completed'}
+          className={`w-full py-2 px-4 rounded text-sm font-medium transition-colors ${
+            processingStatus === 'completed'
+              ? 'bg-black text-white hover:bg-gray-800'
+              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          }`}
+        >
+          {processingStatus === 'completed' ? '📥 下载完整讲解文档' : '等待处理完成后下载...'}
+        </button>
       </div>
 
-      {/* 摘要 */}
-      {currentExplanation.content.summary &&
-       currentExplanation.content.summary.trim() && (
-        <div className="mb-6">
-          <h3 className="text-base font-bold mb-3 pb-2 border-b border-gray-200">
-            📝 摘要
-          </h3>
-          <div className="p-4 bg-gray-50 border-l-4 border-black">
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
-              {currentExplanation.content.summary}
-            </p>
+      {/* 内容区域 */}
+      <div className="flex-1 overflow-auto p-6">
+        {isLoadingCurrentPage ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="animate-spin h-8 w-8 border-2 border-black border-t-transparent rounded-full mx-auto mb-4"></div>
+              <p className="text-gray-500">正在加载解释...</p>
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* 关键点 - 过滤重复内容 */}
-      {!isContentDuplicate && currentExplanation.content.key_points.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-base font-bold mb-3 pb-2 border-b border-gray-200">
-            🔑 关键概念
-          </h3>
-          <div className="space-y-3">
-            {currentExplanation.content.key_points
-              .filter(
-                (point) =>
-                  point.concept !== '原始文本' &&
-                  point.concept !== 'AI 生成的解释'
-              )
-              .map((point, index) => (
-                <div
-                  key={index}
-                  className={`p-4 border rounded-lg ${
-                    point.is_important
-                      ? 'border-black bg-white shadow-sm'
-                      : 'border-gray-200 bg-gray-50'
-                  }`}
-                >
-                  <h4 className="font-semibold mb-2 text-sm text-gray-900">
-                    {point.concept}
-                  </h4>
-                  <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                    {point.explanation}
-                  </p>
-                </div>
-              ))}
+        ) : currentPageError ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center px-4">
+              <p className="text-red-500 mb-2">加载失败</p>
+              <p className="text-gray-600 text-sm">{currentPageError}</p>
+            </div>
           </div>
-        </div>
-      )}
+        ) : currentExplanation ? (
+          <div className="prose prose-sm max-w-none">
+            {/* 页码标签 */}
+            <div className="mb-4">
+              <span className="px-3 py-1 text-xs border border-black bg-white">
+                第 {currentExplanation.page_number} 页
+              </span>
+            </div>
 
-      {/* 类比 */}
-      {currentExplanation.content.analogy &&
-       currentExplanation.content.analogy.trim() &&
-       !currentExplanation.content.analogy.includes('[将在 Phase') && (
-        <div className="mb-6">
-          <h3 className="text-base font-bold mb-3 pb-2 border-b border-gray-200">
-            💡 类比说明
-          </h3>
-          <div className="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r">
-            <p className="text-sm text-gray-800 italic leading-relaxed whitespace-pre-wrap">
-              {currentExplanation.content.analogy}
-            </p>
+            {/* Markdown 内容渲染 */}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // 自定义标题样式
+                h1: ({ children }) => (
+                  <h1 className="text-xl font-bold mt-6 mb-3 pb-2 border-b">{children}</h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="text-lg font-bold mt-5 mb-2">{children}</h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="text-base font-semibold mt-4 mb-2">{children}</h3>
+                ),
+                // 自定义段落
+                p: ({ children }) => (
+                  <p className="text-sm text-gray-700 leading-relaxed mb-3">{children}</p>
+                ),
+                // 自定义列表
+                ul: ({ children }) => (
+                  <ul className="list-disc list-inside text-sm text-gray-700 mb-3 space-y-1">{children}</ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="list-decimal list-inside text-sm text-gray-700 mb-3 space-y-1">{children}</ol>
+                ),
+                // 自定义强调
+                strong: ({ children }) => (
+                  <strong className="font-semibold text-gray-900">{children}</strong>
+                ),
+                // 自定义代码块
+                code: ({ children, className }) => {
+                  const isInline = !className;
+                  return isInline ? (
+                    <code className="bg-gray-100 px-1 py-0.5 rounded text-sm">{children}</code>
+                  ) : (
+                    <code className="block bg-gray-100 p-3 rounded text-sm overflow-x-auto">{children}</code>
+                  );
+                },
+                // 自定义引用块
+                blockquote: ({ children }) => (
+                  <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600 my-3">
+                    {children}
+                  </blockquote>
+                ),
+              }}
+            >
+              {currentExplanation.markdown_content}
+            </ReactMarkdown>
           </div>
-        </div>
-      )}
-
-      {/* 示例 */}
-      {currentExplanation.content.example &&
-       currentExplanation.content.example.trim() && (
-        <div className="mb-6">
-          <h3 className="text-base font-bold mb-3 pb-2 border-b border-gray-200">
-            📚 示例
-          </h3>
-          <div className="p-4 border border-gray-200 bg-white rounded-lg">
-            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-              {currentExplanation.content.example}
-            </p>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-gray-400">暂无解释</p>
           </div>
-        </div>
-      )}
-
-      {/* 元信息 */}
-      <div className="mt-8 pt-4 border-t border-gray-200 text-xs text-gray-400 space-y-1">
-        <p>原始语言: {currentExplanation.original_language}</p>
+        )}
       </div>
     </div>
   );

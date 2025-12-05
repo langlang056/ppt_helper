@@ -1,6 +1,6 @@
 """Pydantic models for API requests/responses."""
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 
 
 class KeyPoint(BaseModel):
@@ -33,6 +33,15 @@ class PageExplanation(BaseModel):
     )
 
 
+# 新增：Markdown格式的解释响应
+class PageExplanationMarkdown(BaseModel):
+    """Markdown format explanation for a single PDF page."""
+
+    page_number: int = Field(..., ge=1, description="1-indexed page number")
+    markdown_content: str = Field(..., description="Markdown formatted explanation")
+    summary: str = Field(default="", description="Brief summary for context")
+
+
 class UploadResponse(BaseModel):
     """Response after successful PDF upload."""
 
@@ -54,3 +63,14 @@ class ErrorResponse(BaseModel):
 
     error: str
     detail: str | None = None
+
+
+# 新增：处理进度响应
+class ProcessingProgress(BaseModel):
+    """Processing progress for a PDF."""
+
+    pdf_id: str
+    total_pages: int
+    processed_pages: int
+    status: str  # pending, processing, completed, failed
+    progress_percentage: float

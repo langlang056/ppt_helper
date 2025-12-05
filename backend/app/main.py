@@ -1,20 +1,31 @@
 """PPT Helper - FastAPI 后端"""
 import os
+import asyncio
+import base64
+import io
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from datetime import datetime
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 import json
 
 from app.config import get_settings
-from app.models.database import init_db, get_db
-from app.models.schemas import UploadResponse, PageExplanation, PageContent, KeyPoint
+from app.models.database import init_db, get_db, AsyncSessionLocal
+from app.models.schemas import (
+    UploadResponse, PageExplanation, PageContent, KeyPoint,
+    PageExplanationMarkdown, ProcessingProgress
+)
 from app.services.pdf_parser import pdf_parser
 from app.services.cache_service import cache_service
 from app.services.llm_service import llm_service
 
 settings = get_settings()
+
+# 存储正在处理的任务
+processing_tasks = {}
 
 
 @asynccontextmanager
@@ -29,7 +40,7 @@ async def lifespan(app: FastAPI):
     print("👋 关闭服务")
 
 
-app = FastAPI(title="PPT Helper API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="PPT Helper API", version="0.4.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,12 +53,84 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "PPT Helper API", "version": "0.3.0", "status": "running"}
+    return {"message": "PPT Helper API", "version": "0.4.0", "status": "running"}
+
+
+async def process_pdf_background(pdf_id: str, file_path: str, total_pages: int):
+    """后台任务：按顺序处理所有页面"""
+    print(f"🚀 开始后台处理 PDF: {pdf_id}, 共 {total_pages} 页")
+    
+    async with AsyncSessionLocal() as db:
+        try:
+            # 更新状态为处理中
+            await cache_service.update_processing_status(db, pdf_id, "processing", 0)
+            
+            for page_number in range(1, total_pages + 1):
+                print(f"📄 处理第 {page_number}/{total_pages} 页...")
+                
+                try:
+                    # 检查是否已有缓存
+                    cached = await cache_service.get_cached_markdown_explanation(db, pdf_id, page_number)
+                    if cached:
+                        print(f"✅ 第 {page_number} 页已有缓存，跳过")
+                        await cache_service.update_processing_status(db, pdf_id, "processing", page_number)
+                        continue
+                    
+                    # 提取页面图像
+                    page_image = await pdf_parser.parse_single_page(file_path, page_number)
+                    
+                    # 获取前面页面的摘要作为上下文
+                    previous_summaries = await cache_service.get_previous_summaries(
+                        db, pdf_id, page_number, max_pages=3
+                    )
+                    
+                    # 调用 LLM 生成解释
+                    markdown_content = await llm_service.analyze_image(
+                        image=page_image,
+                        page_num=page_number,
+                        previous_summaries=previous_summaries,
+                        temperature=0.7,
+                        max_tokens=2000,
+                    )
+                    
+                    # 提取摘要
+                    summary = llm_service.extract_summary(markdown_content, page_number)
+                    
+                    # 保存到缓存
+                    await cache_service.save_markdown_explanation(
+                        db, pdf_id, page_number, markdown_content, summary
+                    )
+                    
+                    # 更新进度
+                    await cache_service.update_processing_status(db, pdf_id, "processing", page_number)
+                    
+                    print(f"✅ 第 {page_number} 页处理完成")
+                    
+                except Exception as e:
+                    print(f"❌ 处理第 {page_number} 页失败: {str(e)}")
+                    # 继续处理下一页
+                    continue
+            
+            # 处理完成
+            await cache_service.update_processing_status(db, pdf_id, "completed", total_pages)
+            print(f"🎉 PDF {pdf_id} 全部处理完成")
+            
+        except Exception as e:
+            print(f"❌ 后台处理失败: {str(e)}")
+            await cache_service.update_processing_status(db, pdf_id, "failed", 0)
+        finally:
+            # 清理任务记录
+            if pdf_id in processing_tasks:
+                del processing_tasks[pdf_id]
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload_pdf(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    """上传并解析 PDF"""
+async def upload_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...), 
+    db: AsyncSession = Depends(get_db)
+):
+    """上传并解析 PDF，启动后台处理"""
     if not file.filename.endswith(".pdf"):
         raise HTTPException(400, "仅支持 PDF 文件")
 
@@ -65,16 +148,27 @@ async def upload_pdf(file: UploadFile = File(...), db: AsyncSession = Depends(ge
         # 检查是否已存在
         if await cache_service.check_pdf_exists(db, pdf_id):
             pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
-            return UploadResponse(
-                pdf_id=pdf_id,
-                total_pages=pdf_doc.total_pages,
-                filename=file.filename,
-                message="PDF 已存在缓存中",
-            )
+            if temp_path.exists():
+                temp_path.unlink()
+            if pdf_doc:
+                return UploadResponse(
+                    pdf_id=pdf_id,
+                    total_pages=pdf_doc.total_pages,
+                    filename=file.filename,
+                    message="PDF 已存在缓存中",
+                )
+            else:
+                # PDF 存在但元数据丢失，重新处理
+                pass
 
         # 移动到永久存储
         final_path = Path(settings.upload_dir) / f"{pdf_id}.pdf"
-        temp_path.rename(final_path)
+        if final_path.exists():
+            # 如果目标文件已存在，删除临时文件
+            if temp_path.exists():
+                temp_path.unlink()
+        else:
+            temp_path.rename(final_path)
 
         total_pages = pdf_parser.get_page_count(str(final_path))
 
@@ -82,7 +176,18 @@ async def upload_pdf(file: UploadFile = File(...), db: AsyncSession = Depends(ge
             db, pdf_id, file.filename, total_pages, str(final_path)
         )
 
-        return UploadResponse(pdf_id=pdf_id, total_pages=total_pages, filename=file.filename)
+        # 启动后台处理任务
+        background_tasks.add_task(
+            process_pdf_background, pdf_id, str(final_path), total_pages
+        )
+        processing_tasks[pdf_id] = True
+
+        return UploadResponse(
+            pdf_id=pdf_id, 
+            total_pages=total_pages, 
+            filename=file.filename,
+            message="PDF 已上传，正在后台处理中"
+        )
 
     except Exception as e:
         if temp_path.exists():
@@ -90,9 +195,27 @@ async def upload_pdf(file: UploadFile = File(...), db: AsyncSession = Depends(ge
         raise HTTPException(500, f"上传失败: {str(e)}")
 
 
-@app.get("/api/explain/{pdf_id}/{page_number}", response_model=PageExplanation)
+@app.get("/api/progress/{pdf_id}", response_model=ProcessingProgress)
+async def get_progress(pdf_id: str, db: AsyncSession = Depends(get_db)):
+    """获取 PDF 处理进度"""
+    pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
+    if not pdf_doc:
+        raise HTTPException(404, "PDF 未找到")
+
+    progress_percentage = (pdf_doc.processed_pages / pdf_doc.total_pages * 100) if pdf_doc.total_pages > 0 else 0
+
+    return ProcessingProgress(
+        pdf_id=pdf_id,
+        total_pages=pdf_doc.total_pages,
+        processed_pages=pdf_doc.processed_pages,
+        status=pdf_doc.processing_status or "pending",
+        progress_percentage=round(progress_percentage, 1)
+    )
+
+
+@app.get("/api/explain/{pdf_id}/{page_number}", response_model=PageExplanationMarkdown)
 async def get_explanation(pdf_id: str, page_number: int, db: AsyncSession = Depends(get_db)):
-    """获取页面 AI 解释"""
+    """获取页面 AI 解释（Markdown 格式）"""
     pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
     if not pdf_doc:
         raise HTTPException(404, "PDF 未找到")
@@ -100,125 +223,102 @@ async def get_explanation(pdf_id: str, page_number: int, db: AsyncSession = Depe
     if not (1 <= page_number <= pdf_doc.total_pages):
         raise HTTPException(400, f"页码无效，范围: 1-{pdf_doc.total_pages}")
 
-    try:
-        # 提取页面图像
-        page_image = await pdf_parser.parse_single_page(pdf_doc.file_path, page_number)
+    # 尝试从缓存获取
+    cached = await cache_service.get_cached_markdown_explanation(db, pdf_id, page_number)
+    if cached:
+        return cached
 
-        # 构建 prompt
-        system_message = """你是大学课程讲解助手。分析PPT图像，用中文通俗解释。
+    # 如果没有缓存，说明后台任务还没处理到这一页
+    # 返回一个处理中的提示
+    return PageExplanationMarkdown(
+        page_number=page_number,
+        markdown_content="⏳ **正在生成中...**\n\n该页面正在后台处理中，请稍候刷新。",
+        summary=""
+    )
 
-返回JSON格式:
-{
-  "page_type": "TITLE/CONTENT/END",
-  "summary": "简洁摘要(2-3句)",
-  "key_points": [{"concept": "概念", "explanation": "通俗解释", "is_important": true}],
-  "analogy": "生活类比(可选)",
-  "example": "具体例子(可选)",
-  "original_language": "en/zh/mixed"
-}
 
-要求: 抓住2-3个关键概念，解释简洁清晰。"""
+@app.get("/api/download/{pdf_id}")
+async def download_markdown(pdf_id: str, db: AsyncSession = Depends(get_db)):
+    """下载完整的 Markdown 文件（包含页面截图）"""
+    pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
+    if not pdf_doc:
+        raise HTTPException(404, "PDF 未找到")
 
-        user_prompt = f"""分析第{page_number}页，返回完整JSON，不要截断。"""
+    if pdf_doc.processing_status != "completed":
+        raise HTTPException(400, f"PDF 尚未处理完成，当前状态: {pdf_doc.processing_status}")
 
-        # 调用 Gemini Vision
-        llm_response = await llm_service.analyze_image(
-            image=page_image,
-            prompt=user_prompt,
-            system_message=system_message,
-            temperature=0.3,
-            max_tokens=8000,
-        )
+    # 获取所有解释
+    explanations = await cache_service.get_all_explanations(db, pdf_id)
+    
+    if not explanations:
+        raise HTTPException(404, "未找到任何解释内容")
 
-        # 解析 JSON
+    # 生成 Markdown 内容
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    md_content = f"""# 课件讲解: {pdf_doc.filename}
+
+> 生成时间: {timestamp}
+> 总页数: {pdf_doc.total_pages}
+
+---
+
+"""
+    
+    for explanation in explanations:
+        page_num = explanation.page_number
+        
+        # 获取页面图像并转为 base64
         try:
-            response_text = llm_response.strip()
-            print(f"🔍 响应预览: {response_text[:200]}...")
+            page_image = await pdf_parser.parse_single_page(pdf_doc.file_path, page_num)
+            
+            # 转换为 base64
+            img_buffer = io.BytesIO()
+            page_image.save(img_buffer, format='PNG')
+            img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+            
+            md_content += f"""## 第 {page_num} 页
 
-            # 提取 JSON（处理 markdown 代码块）
-            if "```json" in response_text:
-                parts = response_text.split("```json")
-                if len(parts) > 1:
-                    response_text = parts[1].split("```")[0].strip()
-                    print("✅ 已提取 JSON")
-            elif "```" in response_text:
-                parts = response_text.split("```")
-                if len(parts) >= 3:
-                    response_text = parts[1].strip()
-                    print("✅ 已提取 JSON")
+![第{page_num}页](data:image/png;base64,{img_base64})
 
-            # 查找 JSON 对象边界
-            if not response_text.startswith("{"):
-                start = response_text.find("{")
-                end = response_text.rfind("}")
-                if start != -1 and end != -1:
-                    response_text = response_text[start:end+1]
-                    print("✅ 已提取 JSON 对象")
+{explanation.explanation_json}
 
-            # 修复不完整的 JSON
-            if response_text.startswith("{") and not response_text.rstrip().endswith("}"):
-                print("⚠️ JSON 被截断，尝试修复...")
-                response_text = response_text.rstrip()
-                if response_text.endswith(","):
-                    response_text = response_text[:-1]
-                if response_text.count('"') % 2 != 0:
-                    response_text += '"'
-                response_text += "}" * (response_text.count("{") - response_text.count("}"))
-                response_text += "]" * (response_text.count("[") - response_text.count("]"))
-                print(f"✅ 修复完成")
+---
 
-            print(f"📝 解析 JSON ({len(response_text)} 字符)")
-            llm_data = json.loads(response_text)
-            print("✅ JSON 解析成功")
+"""
+        except Exception as e:
+            print(f"⚠️ 获取第 {page_num} 页图像失败: {str(e)}")
+            md_content += f"""## 第 {page_num} 页
 
-            # 构建响应
-            key_points = [
-                KeyPoint(
-                    concept=kp.get("concept", ""),
-                    explanation=kp.get("explanation", ""),
-                    is_important=kp.get("is_important", False),
-                )
-                for kp in llm_data.get("key_points", [])
-            ]
+{explanation.explanation_json}
 
-            explanation = PageExplanation(
-                page_number=page_number,
-                page_type=llm_data.get("page_type", "CONTENT"),
-                content=PageContent(
-                    summary=llm_data.get("summary", ""),
-                    key_points=key_points,
-                    analogy=llm_data.get("analogy", ""),
-                    example=llm_data.get("example", ""),
-                ),
-                original_language=llm_data.get("original_language", "mixed"),
-            )
+---
 
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON 解析失败: {str(e)}")
-            print(f"❌ 失败文本: {response_text[:500]}...")
-            # 降级方案：使用原始响应
-            explanation = PageExplanation(
-                page_number=page_number,
-                page_type="CONTENT",
-                content=PageContent(
-                    summary=llm_response[:500],
-                    key_points=[
-                        KeyPoint(
-                            concept="AI 生成的解释",
-                            explanation=llm_response,
-                            is_important=True,
-                        )
-                    ],
-                    analogy="",
-                    example="",
-                ),
-                original_language="mixed",
-            )
+"""
+    
+    # 添加页脚
+    md_content += f"""
+## 文档说明
 
-        return explanation
+- 本文档由 PDF 课件自动讲解系统生成
+- 每页内容包含课件截图和 AI 详细讲解
+- 建议结合原始课件一起学习
 
-    except Exception as e:
-        raise HTTPException(500, f"处理失败: {str(e)}")
+---
+*Generated by PPT Helper*
+"""
+    
+    # 生成文件名
+    filename = f"{Path(pdf_doc.filename).stem}_explained.md"
+    
+    # 返回文件流
+    return StreamingResponse(
+        io.BytesIO(md_content.encode('utf-8')),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
 
 
 @app.get("/api/pdf/{pdf_id}/info")
@@ -233,6 +333,8 @@ async def get_pdf_info(pdf_id: str, db: AsyncSession = Depends(get_db)):
         "filename": pdf_doc.filename,
         "total_pages": pdf_doc.total_pages,
         "uploaded_at": pdf_doc.uploaded_at.isoformat(),
+        "processing_status": pdf_doc.processing_status,
+        "processed_pages": pdf_doc.processed_pages,
     }
 
 
