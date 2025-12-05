@@ -33,16 +33,16 @@ export default function Home() {
 
       {/* 主内容区 - 左右分屏 */}
       <main className="flex-1 flex overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100">
-        {/* 左侧: PDF 查看器 - 占 70% */}
-        <div className="w-[70%] border-r border-gray-200 bg-white shadow-lg flex flex-col overflow-hidden">
+        {/* 左侧: PDF 查看器 - 占 55% */}
+        <div className="w-[55%] border-r border-gray-200 bg-white shadow-lg flex flex-col overflow-hidden">
           {/* 页码选择器 */}
           {pdfId && <PageSelector />}
           {/* PDF 查看器 - 直接占据剩余空间 */}
           <PdfViewer />
         </div>
 
-        {/* 右侧: 解释面板 - 占 30% */}
-        <div className="w-[30%] bg-gradient-to-b from-white to-gray-50">
+        {/* 右侧: 解释面板 - 占 45% */}
+        <div className="w-[45%] bg-gradient-to-b from-white to-gray-50">
           <ExplanationPanel />
         </div>
       </main>

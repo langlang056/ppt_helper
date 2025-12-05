@@ -13,15 +13,13 @@ const isTemporaryContent = (content: string) => {
          content.includes('⏳');
 };
 
-// 预加载的页数
-const PRELOAD_PAGES = 5;
-
 export default function ExplanationPanel() {
   const {
     pdfId,
     filename,
     currentPage,
     totalPages,
+    selectedPages,
     explanations,
     processingStatus,
     processedPages,
@@ -34,53 +32,15 @@ export default function ExplanationPanel() {
     setPageError,
   } = usePdfStore();
 
+  // 计算显示用的总页数：如果有选择页面，使用选择的页数；否则使用总页数
+  const displayTotalPages = selectedPages.length > 0 ? selectedPages.length : totalPages;
+
   // 用于跟踪当前页面的轮询
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  // 用于跟踪预加载状态，避免重复请求
-  const preloadingRef = useRef<Set<number>>(new Set());
-
-  // 预加载函数 - 静默加载后续页面
-  const preloadPages = useCallback(async (startPage: number) => {
-    if (!pdfId) return;
-
-    for (let i = 1; i <= PRELOAD_PAGES; i++) {
-      const pageToLoad = startPage + i;
-      
-      // 超出总页数则跳过
-      if (pageToLoad > totalPages) continue;
-      
-      // 已经在缓存中且不是临时内容，跳过
-      const cached = explanations.get(pageToLoad);
-      if (cached && !isTemporaryContent(cached.markdown_content)) continue;
-      
-      // 正在预加载中，跳过
-      if (preloadingRef.current.has(pageToLoad)) continue;
-      
-      // 正在加载中，跳过
-      if (loadingPages.has(pageToLoad)) continue;
-
-      // 标记为预加载中
-      preloadingRef.current.add(pageToLoad);
-
-      // 异步加载，不阻塞
-      getExplanation(pdfId, pageToLoad)
-        .then((explanation) => {
-          // 只有当内容不是临时的才缓存
-          if (!isTemporaryContent(explanation.markdown_content)) {
-            setExplanation(pageToLoad, explanation);
-          }
-        })
-        .catch((error) => {
-          console.log(`预加载第 ${pageToLoad} 页失败:`, error.message);
-        })
-        .finally(() => {
-          preloadingRef.current.delete(pageToLoad);
-        });
-
-      // 每个请求间隔 100ms，避免同时发送太多请求
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }, [pdfId, totalPages, explanations, loadingPages, setExplanation]);
+  // 防止重复加载的标志
+  const isLoadingRef = useRef(false);
+  // 记录当前加载的页面，避免重复加载
+  const currentLoadingPageRef = useRef<number | null>(null);
 
   // 轮询处理进度（仅在处理中时轮询）
   useEffect(() => {
@@ -103,31 +63,39 @@ export default function ExplanationPanel() {
     const interval = setInterval(pollProgress, 3000);
 
     return () => clearInterval(interval);
-  }, [pdfId, processingStatus, setProgress]);
+  }, [pdfId, processingStatus]);
 
   // 当页面切换时，加载解释
   useEffect(() => {
     if (!pdfId) return;
 
-    // 清除之前的轮询
+    // 立即清除之前的轮询
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
     const loadExplanation = async () => {
+      // 防止重复加载同一页面
+      if (isLoadingRef.current && currentLoadingPageRef.current === currentPage) {
+        return;
+      }
+
       // 检查是否正在加载
       if (loadingPages.has(currentPage)) {
         return;
       }
 
-      // 检查缓存 - 如果有缓存且不是临时内容，触发预加载并返回
+      // 检查缓存 - 如果有缓存且不是临时内容，直接返回
       const cached = explanations.get(currentPage);
       if (cached && !isTemporaryContent(cached.markdown_content)) {
-        // 缓存命中，预加载后续页面
-        preloadPages(currentPage);
+        // 缓存命中，直接返回
         return;
       }
+
+      // 设置加载标志
+      isLoadingRef.current = true;
+      currentLoadingPageRef.current = currentPage;
 
       setPageLoading(currentPage, true);
       setPageError(currentPage, null);
@@ -135,30 +103,35 @@ export default function ExplanationPanel() {
       try {
         const explanation = await getExplanation(pdfId, currentPage);
         setExplanation(currentPage, explanation);
-        
+
         // 如果返回的是临时内容，启动轮询
         if (isTemporaryContent(explanation.markdown_content)) {
+          // 确保之前的轮询已清除
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+          }
+
           pollIntervalRef.current = setInterval(async () => {
             try {
               const newExplanation = await getExplanation(pdfId, currentPage);
               setExplanation(currentPage, newExplanation);
-              
-              // 如果不再是临时内容，停止轮询并触发预加载
+
+              // 如果不再是临时内容，停止轮询
               if (!isTemporaryContent(newExplanation.markdown_content)) {
                 if (pollIntervalRef.current) {
                   clearInterval(pollIntervalRef.current);
                   pollIntervalRef.current = null;
                 }
-                // 当前页加载完成，预加载后续页面
-                preloadPages(currentPage);
               }
             } catch (error) {
               console.error('轮询解释失败:', error);
+              // 轮询出错时也停止轮询
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
             }
           }, 2000); // 每 2 秒检查一次
-        } else {
-          // 当前页已经有内容，立即预加载后续页面
-          preloadPages(currentPage);
         }
       } catch (error: any) {
         console.error('加载解释失败:', error);
@@ -166,6 +139,8 @@ export default function ExplanationPanel() {
         setPageError(currentPage, errorMsg);
       } finally {
         setPageLoading(currentPage, false);
+        isLoadingRef.current = false;
+        currentLoadingPageRef.current = null;
       }
     };
 
@@ -178,7 +153,7 @@ export default function ExplanationPanel() {
         pollIntervalRef.current = null;
       }
     };
-  }, [pdfId, currentPage, preloadPages]);
+  }, [pdfId, currentPage]); // 只依赖 pdfId 和 currentPage，移除 explanations 和 loadingPages
 
   // 下载处理
   const handleDownload = useCallback(async () => {
@@ -214,7 +189,7 @@ export default function ExplanationPanel() {
         <div className="mb-4">
           <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
             <span>
-              处理进度: {processedPages}/{totalPages} 页
+              处理进度: {processedPages}/{displayTotalPages} 页
               {processingStatus === 'processing' && ' (处理中...)'}
               {processingStatus === 'completed' && ' ✅'}
               {processingStatus === 'failed' && ' ❌'}
@@ -278,43 +253,43 @@ export default function ExplanationPanel() {
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                // 自定义标题样式
+                // 自定义标题样式 - 增大字体
                 h1: ({ children }) => (
-                  <h1 className="text-xl font-bold mt-6 mb-3 pb-2 border-b">{children}</h1>
+                  <h1 className="text-2xl font-bold mt-8 mb-4 pb-2 border-b">{children}</h1>
                 ),
                 h2: ({ children }) => (
-                  <h2 className="text-lg font-bold mt-5 mb-2">{children}</h2>
+                  <h2 className="text-xl font-bold mt-6 mb-3">{children}</h2>
                 ),
                 h3: ({ children }) => (
-                  <h3 className="text-base font-semibold mt-4 mb-2">{children}</h3>
+                  <h3 className="text-lg font-semibold mt-5 mb-2">{children}</h3>
                 ),
-                // 自定义段落
+                // 自定义段落 - 增大字体
                 p: ({ children }) => (
-                  <p className="text-sm text-gray-700 leading-relaxed mb-3">{children}</p>
+                  <p className="text-base text-gray-700 leading-relaxed mb-4">{children}</p>
                 ),
-                // 自定义列表
+                // 自定义列表 - 增大字体
                 ul: ({ children }) => (
-                  <ul className="list-disc list-inside text-sm text-gray-700 mb-3 space-y-1">{children}</ul>
+                  <ul className="list-disc list-inside text-base text-gray-700 mb-4 space-y-2">{children}</ul>
                 ),
                 ol: ({ children }) => (
-                  <ol className="list-decimal list-inside text-sm text-gray-700 mb-3 space-y-1">{children}</ol>
+                  <ol className="list-decimal list-inside text-base text-gray-700 mb-4 space-y-2">{children}</ol>
                 ),
                 // 自定义强调
                 strong: ({ children }) => (
                   <strong className="font-semibold text-gray-900">{children}</strong>
                 ),
-                // 自定义代码块
+                // 自定义代码块 - 增大字体
                 code: ({ children, className }) => {
                   const isInline = !className;
                   return isInline ? (
-                    <code className="bg-gray-100 px-1 py-0.5 rounded text-sm">{children}</code>
+                    <code className="bg-gray-100 px-1.5 py-0.5 rounded text-base">{children}</code>
                   ) : (
-                    <code className="block bg-gray-100 p-3 rounded text-sm overflow-x-auto">{children}</code>
+                    <code className="block bg-gray-100 p-4 rounded text-base overflow-x-auto">{children}</code>
                   );
                 },
-                // 自定义引用块
+                // 自定义引用块 - 增大字体
                 blockquote: ({ children }) => (
-                  <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600 my-3">
+                  <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600 my-4 text-base">
                     {children}
                   </blockquote>
                 ),

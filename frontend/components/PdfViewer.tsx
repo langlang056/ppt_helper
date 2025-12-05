@@ -17,20 +17,43 @@ if (typeof window !== 'undefined') {
 export default function PdfViewer() {
   const { pdfFile, currentPage, totalPages, setCurrentPage } = usePdfStore();
   const [numPages, setNumPages] = useState<number>(0);
-  const [pageWidth, setPageWidth] = useState<number>(600);
+  const [pageWidth, setPageWidth] = useState<number | undefined>(undefined);
+  const [pageHeight, setPageHeight] = useState<number | undefined>(undefined);
 
   useEffect(() => {
-    const updateWidth = () => {
+    const updateSize = () => {
       const container = document.getElementById('pdf-container');
       if (container) {
-        // 使用容器宽度的 98%，最大化显示空间
-        setPageWidth(container.clientWidth * 0.98);
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+
+        // PPT 通常是 16:9 或 4:3 的宽高比，我们按容器大小自适应
+        // 计算基于宽度和高度的缩放，选择能完整显示的那个
+        const pptAspectRatio = 16 / 9; // 假设 PPT 是 16:9
+
+        const widthBasedHeight = containerWidth / pptAspectRatio;
+        const heightBasedWidth = containerHeight * pptAspectRatio;
+
+        // 留一些边距 (padding)
+        const padding = 16;
+        const availableWidth = containerWidth - padding * 2;
+        const availableHeight = containerHeight - padding * 2;
+
+        if (widthBasedHeight <= availableHeight) {
+          // 宽度受限，使用宽度来缩放
+          setPageWidth(availableWidth);
+          setPageHeight(undefined);
+        } else {
+          // 高度受限，使用高度来缩放
+          setPageHeight(availableHeight);
+          setPageWidth(undefined);
+        }
       }
     };
 
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
   }, []);
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
@@ -85,7 +108,7 @@ export default function PdfViewer() {
       {/* PDF 显示区域 - 最大化显示，垂直居中 */}
       <div
         id="pdf-container"
-        className="flex-1 overflow-auto p-1 bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center min-h-0"
+        className="flex-1 overflow-auto p-2 bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center min-h-0"
       >
         <Document
           file={pdfFile}
@@ -104,6 +127,7 @@ export default function PdfViewer() {
           <Page
             pageNumber={currentPage}
             width={pageWidth}
+            height={pageHeight}
             renderTextLayer={false}
             renderAnnotationLayer={false}
           />

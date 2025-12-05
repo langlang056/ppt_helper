@@ -5,7 +5,7 @@ import { usePdfStore } from '@/store/pdfStore';
 import { startProcessing } from '@/lib/api';
 
 export default function PageSelector() {
-  const { pdfId, totalPages, selectedPages, setSelectedPages, processingStatus } = usePdfStore();
+  const { pdfId, totalPages, selectedPages, setSelectedPages, processingStatus, setProgress } = usePdfStore();
   const [pageInput, setPageInput] = useState<string>('');
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,10 +80,14 @@ export default function PageSelector() {
     setError(null);
 
     try {
+      // 立即更新状态为 processing，防止重复点击
+      setProgress('processing', 0, 0);
       await startProcessing(pdfId, selectedPages);
       console.log('✅ 开始处理选定页码:', selectedPages);
     } catch (error: any) {
       console.error('❌ 启动处理失败:', error);
+      // 如果启动失败，重置状态
+      setProgress('pending', 0, 0);
       setError(error.response?.data?.detail || '启动处理失败');
     } finally {
       setIsStarting(false);
