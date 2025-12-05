@@ -1,210 +1,134 @@
-# UniTutor AI - Backend
+# UniTutor AI - 后端服务
 
-FastAPI backend for the Multi-Agent Courseware Explainer.
+FastAPI 后端服务,支持 PDF 解析和多 LLM 提供商。
 
-## Phase 1 Status ✅
+## 🚀 快速开始
 
-**Completed Features:**
-- ✅ PDF upload and validation
-- ✅ LlamaParse integration for parsing complex slides
-- ✅ SQLite caching to avoid redundant API calls
-- ✅ Basic API endpoints (`/upload`, `/explain`)
-- ✅ Automatic duplicate detection via file hashing
-
-**Next Steps (Phase 2):**
-- LangGraph multi-agent workflow (Navigator → Professor → Tutor)
-- Claude 3.5 Sonnet integration
-- Structured explanation generation in Chinese
-
----
-
-## Setup Instructions
-
-### 1. Prerequisites
-- Python 3.11+
-- [LlamaCloud API Key](https://cloud.llamaindex.ai/api-key)
-- [Anthropic API Key](https://console.anthropic.com/) (for Phase 2)
-
-### 2. Installation
+### 1. 安装依赖
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# 或
+venv\Scripts\activate  # Windows
 
-# Activate (Windows)
-venv\Scripts\activate
-
-# Activate (Linux/Mac)
-source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configuration
+### 2. 配置环境变量
 
-Copy `.env.example` to `.env` and fill in your API keys:
+复制 `.env.example` 到 `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+编辑 `.env`:
+
 ```env
-LLAMA_CLOUD_API_KEY=llx-your-actual-key-here
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+# 必需
+LLAMA_CLOUD_API_KEY=llx-你的-Key
+
+# LLM 提供商 (选一个)
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=AIzaSy-你的-Gemini-Key
+
+# 或使用 Claude
+# LLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-你的-Claude-Key
 ```
 
-### 4. Run the Server
+### 3. 启动服务
 
 ```bash
-# From backend directory
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload
 ```
 
-Server will start at: `http://localhost:8000`
+访问:
+- API: `http://localhost:8000`
+- 文档: `http://localhost:8000/docs`
 
-API Documentation: `http://localhost:8000/docs`
+## 📖 API 端点
 
----
-
-## API Endpoints
-
-### 1. Upload PDF
+### 上传 PDF
 ```http
 POST /api/upload
 Content-Type: multipart/form-data
 
-file: <PDF file>
-```
-
-**Response:**
-```json
+Response:
 {
-  "pdf_id": "a3f2d9c8b1e4f5a6",
+  "pdf_id": "a3f2d9c8",
   "total_pages": 42,
-  "filename": "lecture_notes.pdf",
-  "message": "PDF uploaded and parsed successfully"
+  "filename": "lecture.pdf"
 }
 ```
 
-### 2. Get Page Explanation
+### 获取页面解释
 ```http
 GET /api/explain/{pdf_id}/{page_number}
-```
 
-**Response (Phase 1 - Basic):**
-```json
+Response:
 {
-  "page_number": 5,
+  "page_number": 1,
   "page_type": "CONTENT",
   "content": {
-    "summary": "第 5 页内容(待 AI 处理)",
-    "key_points": [
-      {
-        "concept": "原始文本",
-        "explanation": "Extracted text preview...",
-        "is_important": false
-      }
-    ],
-    "analogy": "[将在 Phase 2 添加 LangGraph 处理]",
-    "example": ""
-  },
-  "original_language": "mixed"
+    "summary": "页面摘要",
+    "key_points": [...],
+    "analogy": "类比",
+    "example": "示例"
+  }
 }
 ```
 
-### 3. Get PDF Info
+### 获取 PDF 信息
 ```http
 GET /api/pdf/{pdf_id}/info
 ```
 
----
+## 🔧 LLM 配置
 
-## Testing
+支持两种 LLM 提供商,通过环境变量切换:
 
-### Manual Test with cURL
-
-```bash
-# 1. Upload a test PDF
-curl -X POST "http://localhost:8000/api/upload" \
-  -F "file=@test_lecture.pdf"
-
-# 2. Get explanation for page 1 (replace {pdf_id} with response from step 1)
-curl "http://localhost:8000/api/explain/a3f2d9c8b1e4f5a6/1"
+### Gemini (推荐,免费)
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=你的-Key
 ```
 
-### Test with Python
-
-```python
-import requests
-
-# Upload
-with open("test.pdf", "rb") as f:
-    response = requests.post(
-        "http://localhost:8000/api/upload",
-        files={"file": f}
-    )
-print(response.json())
-
-# Get explanation
-pdf_id = response.json()["pdf_id"]
-explanation = requests.get(
-    f"http://localhost:8000/api/explain/{pdf_id}/1"
-)
-print(explanation.json())
+### Claude (功能强大)
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=你的-Key
 ```
 
----
+修改 `.env` 后重启服务即可切换。
 
-## Project Structure
+## 📂 项目结构
 
 ```
 backend/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app & routes
-│   ├── config.py            # Settings management
-│   ├── agents/              # (Phase 2) LangGraph agents
+│   ├── main.py              # FastAPI 应用
+│   ├── config.py            # 配置管理
 │   ├── models/
-│   │   ├── database.py      # SQLAlchemy models
-│   │   └── schemas.py       # Pydantic schemas
+│   │   ├── database.py      # 数据库模型
+│   │   └── schemas.py       # API 模式
 │   └── services/
-│       ├── pdf_parser.py    # LlamaParse integration
-│       └── cache_service.py # Database caching
-├── uploads/                 # Stored PDFs
-├── temp/                    # Temporary files
+│       ├── pdf_parser.py    # PDF 解析
+│       ├── cache_service.py # 缓存服务
+│       └── llm_service.py   # LLM 统一接口
+├── uploads/                 # PDF 文件存储
 ├── requirements.txt
 └── .env
 ```
 
----
+## 🔍 故障排除
 
-## Troubleshooting
+**API Key 错误**: 检查 `.env` 文件配置
 
-### Issue: "LLAMA_CLOUD_API_KEY not found"
-**Solution:** Make sure `.env` file exists and contains valid API key.
+**PDF 解析失败**: 确保文件 < 50MB 且无密码
 
-### Issue: "Unable to parse PDF"
-**Solution:**
-- Check PDF is not password-protected
-- Ensure file size < 50MB
-- Verify LlamaParse API key is active
+**数据库错误**: 删除 `unitutor.db` 并重启
 
-### Issue: Database errors
-**Solution:** Delete `unitutor.db` and restart the server to recreate tables.
-
----
-
-## Phase 2 Preview
-
-Next implementation will add:
-
-1. **Navigator Agent** - Classify page type (TITLE/CONTENT/END)
-2. **Professor Agent** - Extract academic concepts in original language
-3. **Tutor Agent** - Generate Chinese explanations with analogies
-4. **Formatter Agent** - Structure output into final JSON
-
-Stay tuned! 🚀
+更多信息请查看 [项目主 README](../README.md)
