@@ -20,7 +20,7 @@ from app.models.schemas import (
 )
 from app.services.pdf_parser import pdf_parser
 from app.services.cache_service import cache_service
-from app.services.llm_service import llm_service
+from app.services.llm_service import llm_service, create_llm_service
 
 settings = get_settings()
 
@@ -64,20 +64,44 @@ async def root():
     return {"message": "PPT Helper API", "version": "0.4.0", "status": "running"}
 
 
-async def process_pdf_background(pdf_id: str, file_path: str, page_numbers: list[int]):
-    """后台任务：按顺序处理指定页面"""
+async def process_pdf_background(
+    pdf_id: str,
+    file_path: str,
+    page_numbers: list[int],
+    llm_config: dict = None
+):
+    """后台任务：按顺序处理指定页面
+
+    Args:
+        pdf_id: PDF 文档 ID
+        file_path: PDF 文件路径
+        page_numbers: 要处理的页码列表
+        llm_config: LLM 配置 {"api_key": "...", "model": "..."}
+    """
     total_pages_to_process = len(page_numbers)
     print(f"🚀 开始后台处理 PDF: {pdf_id}, 处理 {total_pages_to_process} 页: {page_numbers}")
-    
+
+    # 创建 LLM 服务实例
+    if llm_config and llm_config.get("api_key"):
+        current_llm = create_llm_service(
+            api_key=llm_config["api_key"],
+            model=llm_config.get("model", "gemini-2.5-flash")
+        )
+        print(f"  📡 使用客户端 API Key，模型: {llm_config.get('model', 'gemini-2.5-flash')}")
+    else:
+        # 向后兼容：使用全局配置
+        current_llm = llm_service
+        print(f"  📡 使用服务器默认配置")
+
     try:
         async with AsyncSessionLocal() as db:
             # 更新状态为处理中
             await cache_service.update_processing_status(db, pdf_id, "processing", 0)
-        
+
         processed_count = 0
         for page_number in page_numbers:
             print(f"📄 处理第 {page_number} 页 ({processed_count + 1}/{total_pages_to_process})...")
-            
+
             try:
                 async with AsyncSessionLocal() as db:
                     # 检查是否已有缓存
@@ -87,29 +111,29 @@ async def process_pdf_background(pdf_id: str, file_path: str, page_numbers: list
                         processed_count += 1
                         await cache_service.update_processing_status(db, pdf_id, "processing", processed_count)
                         continue
-                
+
                 # 提取页面图像
                 print(f"  📸 提取页面图像...")
                 page_image = await pdf_parser.parse_single_page(file_path, page_number)
-                
+
                 async with AsyncSessionLocal() as db:
                     # 获取前面页面的摘要作为上下文
                     previous_summaries = await cache_service.get_previous_summaries(
                         db, pdf_id, page_number, max_pages=3
                     )
-                
+
                 # 调用 LLM 生成解释
                 print(f"  🤖 调用 LLM 分析...")
-                markdown_content = await llm_service.analyze_image(
+                markdown_content = await current_llm.analyze_image(
                     image=page_image,
                     page_num=page_number,
                     previous_summaries=previous_summaries,
                     temperature=0.7,
                     max_tokens=4000,
                 )
-                
+
                 # 提取摘要
-                summary = llm_service.extract_summary(markdown_content, page_number)
+                summary = current_llm.extract_summary(markdown_content, page_number)
                 
                 async with AsyncSessionLocal() as db:
                     # 保存到缓存
@@ -243,13 +267,23 @@ async def start_processing(
     page_numbers = request.get("page_numbers", [])
     if not page_numbers:
         raise HTTPException(400, "请提供要处理的页码列表")
-    
+
+    # 获取 LLM 配置（可选）
+    llm_config = request.get("llm_config", None)
+    if llm_config:
+        # 验证 LLM 配置
+        if not llm_config.get("api_key"):
+            raise HTTPException(400, "请提供有效的 API Key")
+        model = llm_config.get("model", "gemini-2.5-flash")
+        if model not in ["gemini-2.5-flash", "gemini-2.5-pro"]:
+            raise HTTPException(400, f"不支持的模型: {model}")
+
     # 验证页码
     total_pages = pdf_doc.total_pages
     invalid_pages = [p for p in page_numbers if p < 1 or p > total_pages]
     if invalid_pages:
         raise HTTPException(400, f"页码无效: {invalid_pages}，有效范围: 1-{total_pages}")
-    
+
     # 更新选定页数
     async with AsyncSessionLocal() as update_db:
         from sqlalchemy import update
@@ -261,16 +295,17 @@ async def start_processing(
         )
         await update_db.execute(stmt)
         await update_db.commit()
-    
-    # 启动后台处理任务
+
+    # 启动后台处理任务（传递 LLM 配置）
     task = asyncio.create_task(
-        process_pdf_background(pdf_id, pdf_doc.file_path, page_numbers)
+        process_pdf_background(pdf_id, pdf_doc.file_path, page_numbers, llm_config)
     )
     processing_tasks[pdf_id] = task
-    
+
     return {
         "message": f"已启动处理 {len(page_numbers)} 页",
-        "page_numbers": page_numbers
+        "page_numbers": page_numbers,
+        "model": llm_config.get("model", "default") if llm_config else "server_default"
     }
 
 

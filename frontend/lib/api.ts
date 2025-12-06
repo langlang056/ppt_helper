@@ -100,10 +100,25 @@ export async function getProgress(pdfId: string): Promise<ProcessingProgress> {
 }
 
 /**
+ * LLM 配置接口
+ */
+export interface LLMConfig {
+  api_key: string;
+  model: string;
+}
+
+/**
  * 启动处理指定页码
  */
-export async function startProcessing(pdfId: string, pageNumbers: number[]): Promise<void> {
-  await api.post(`/api/process/${pdfId}`, { page_numbers: pageNumbers });
+export async function startProcessing(
+  pdfId: string,
+  pageNumbers: number[],
+  llmConfig?: LLMConfig
+): Promise<void> {
+  await api.post(`/api/process/${pdfId}`, {
+    page_numbers: pageNumbers,
+    llm_config: llmConfig,
+  });
 }
 
 /**

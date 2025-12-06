@@ -1,16 +1,24 @@
 'use client';
 
+import { useState } from 'react';
 import { usePdfStore } from '@/store/pdfStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import PdfUploader from '@/components/PdfUploader';
 import PdfViewer from '@/components/PdfViewer';
 import ExplanationPanel from '@/components/ExplanationPanel';
 import PageSelector from '@/components/PageSelector';
+import SettingsModal from '@/components/SettingsModal';
 
 export default function Home() {
   const { error, filename, pdfId } = usePdfStore();
+  const { isConfigured, model } = useSettingsStore();
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <div className="flex flex-col h-screen">
+      {/* 设置弹窗 */}
+      <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+
       {/* 顶部导航栏 */}
       <header className="border-b border-gray-200 bg-gradient-to-r from-white via-gray-50 to-white shadow-sm">
         <div className="flex items-center justify-between px-6 py-4">
@@ -20,7 +28,21 @@ export default function Home() {
               <span className="text-sm text-gray-600 font-medium">· {filename}</span>
             )}
           </div>
-          <PdfUploader />
+          <div className="flex items-center gap-3">
+            {/* API 状态指示器 */}
+            <button
+              onClick={() => setShowSettings(true)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                isConfigured
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                  : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${isConfigured ? 'bg-green-500' : 'bg-yellow-500'}`} />
+              {isConfigured ? model : '未配置 API'}
+            </button>
+            <PdfUploader />
+          </div>
         </div>
 
         {/* 错误提示 */}

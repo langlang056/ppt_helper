@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { usePdfStore } from '@/store/pdfStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { startProcessing } from '@/lib/api';
 
 export default function PageSelector() {
   const { pdfId, totalPages, selectedPages, setSelectedPages, processingStatus, setProgress } = usePdfStore();
+  const { apiKey, model, isConfigured } = useSettingsStore();
   const [pageInput, setPageInput] = useState<string>('');
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +78,24 @@ export default function PageSelector() {
       return;
     }
 
+    // 检查是否配置了 API Key
+    if (!isConfigured) {
+      setError('请先配置 API Key（点击右上角设置按钮）');
+      return;
+    }
+
     setIsStarting(true);
     setError(null);
 
     try {
       // 立即更新状态为 processing，防止重复点击
       setProgress('processing', 0, 0);
-      await startProcessing(pdfId, selectedPages);
-      console.log('✅ 开始处理选定页码:', selectedPages);
+      // 传递 LLM 配置
+      await startProcessing(pdfId, selectedPages, {
+        api_key: apiKey,
+        model: model,
+      });
+      console.log('✅ 开始处理选定页码:', selectedPages, '使用模型:', model);
     } catch (error: any) {
       console.error('❌ 启动处理失败:', error);
       // 如果启动失败，重置状态

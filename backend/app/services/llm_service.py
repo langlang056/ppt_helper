@@ -3,8 +3,15 @@ import google.generativeai as genai
 from app.config import get_settings
 from PIL import Image
 from typing import List, Optional
+from dataclasses import dataclass
 
 settings = get_settings()
+
+# 支持的模型列表
+SUPPORTED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+]
 
 # 安全设置：禁用所有过滤器（学术内容）
 SAFETY_SETTINGS = [
@@ -31,17 +38,68 @@ DEFAULT_PROMPT_TEMPLATE = """请作为一名专业的教师,详细分析这一�
 请用清晰、易懂的中文回答,就像在给学生讲解一样。使用Markdown格式输出。"""
 
 
+@dataclass
+class LLMConfig:
+    """LLM 配置"""
+    api_key: str
+    model: str = "gemini-2.5-flash"
+
+
 class GeminiService:
-    """Gemini Vision 服务"""
+    """Gemini Vision 服务 - 支持动态配置"""
 
-    def __init__(self):
-        if not settings.google_api_key:
-            raise ValueError("GOOGLE_API_KEY 未配置")
+    def __init__(self, config: Optional[LLMConfig] = None):
+        """
+        初始化 Gemini 服务
 
-        genai.configure(api_key=settings.google_api_key)
-        self.model = genai.GenerativeModel(settings.google_model)
+        Args:
+            config: LLM 配置，如果为 None 则使用环境变量配置（向后兼容）
+        """
         self.prompt_template = DEFAULT_PROMPT_TEMPLATE
-        print(f"✅ Gemini 已初始化: {settings.google_model}")
+        self._model = None
+        self._api_key = None
+        self._model_name = None
+
+        if config:
+            self._init_with_config(config)
+        elif settings.google_api_key:
+            # 向后兼容：使用环境变量配置
+            self._init_with_config(LLMConfig(
+                api_key=settings.google_api_key,
+                model=settings.google_model
+            ))
+            print(f"✅ Gemini 使用环境变量配置: {settings.google_model}")
+        else:
+            print("⚠️ Gemini 未配置，等待客户端提供 API Key")
+
+    def _init_with_config(self, config: LLMConfig):
+        """使用配置初始化"""
+        if not config.api_key:
+            raise ValueError("API Key 未提供")
+
+        # 验证模型
+        if config.model not in SUPPORTED_MODELS:
+            raise ValueError(f"不支持的模型: {config.model}，支持: {SUPPORTED_MODELS}")
+
+        genai.configure(api_key=config.api_key)
+        self._model = genai.GenerativeModel(config.model)
+        self._api_key = config.api_key
+        self._model_name = config.model
+
+    def configure(self, config: LLMConfig):
+        """动态更新配置"""
+        self._init_with_config(config)
+        print(f"✅ Gemini 配置已更新: {config.model}")
+
+    @property
+    def model(self):
+        if self._model is None:
+            raise ValueError("Gemini 未配置，请先提供 API Key")
+        return self._model
+
+    @property
+    def is_configured(self) -> bool:
+        return self._model is not None
 
     def extract_summary(self, analysis_text: str, page_num: int) -> str:
         """
@@ -178,5 +236,22 @@ class GeminiService:
         return f"## 第 {page_num} 页\n\n⚠️ 多次尝试后仍无法生成内容。"
 
 
-# 全局单例
+# 全局单例（可选，向后兼容）
+# 如果环境变量配置了 API Key，则创建默认实例
+# 否则创建未配置的实例，等待客户端提供配置
 llm_service = GeminiService()
+
+
+def create_llm_service(api_key: str, model: str = "gemini-2.5-flash") -> GeminiService:
+    """
+    创建新的 LLM 服务实例（使用客户端配置）
+
+    Args:
+        api_key: Google API Key
+        model: 模型名称
+
+    Returns:
+        配置好的 GeminiService 实例
+    """
+    config = LLMConfig(api_key=api_key, model=model)
+    return GeminiService(config)
