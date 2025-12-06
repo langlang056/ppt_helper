@@ -48,10 +48,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
-        # 生产环境需要添加你的服务器地址，如:
-        # "http://192.168.1.100",
-        # "http://yourdomain.com",
-        "*"  # 开发时使用，生产环境建议指定具体域名
+        "https://localhost:3000",
+        "https://localhost:3001",
+        # 生产环境添加你的域名
+        "*"  # 允许所有来源，生产环境建议指定具体域名
     ],
     allow_credentials=True,
     allow_methods=["*"],

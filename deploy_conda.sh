@@ -23,11 +23,21 @@ ACTUAL_USER=${SUDO_USER:-$USER}
 echo -e "${YELLOW}当前用户: $ACTUAL_USER${NC}\n"
 
 # 配置变量
-read -p "请输入你的服务器 IP 地址或域名: " SERVER_IP
+read -p "请输入你的服务器域名 (例: example.com): " SERVER_DOMAIN
+read -p "是否启用 HTTPS? (y/n): " ENABLE_HTTPS
 read -p "请输入你的 Google Gemini API Key: " GEMINI_API_KEY
 read -p "请输入项目路径: " INSTALL_PATH
 read -p "请输入 conda 环境名称 (例: ppt-helper): " CONDA_ENV
 read -p "请输入 conda Python 路径 (运行 'which python' 获取): " PYTHON_PATH
+
+# SSL 证书路径（如果启用 HTTPS）
+if [[ "$ENABLE_HTTPS" == "y" || "$ENABLE_HTTPS" == "Y" ]]; then
+    read -p "请输入 SSL 证书路径 (例: /etc/letsencrypt/live/example.com/fullchain.pem): " SSL_CERT
+    read -p "请输入 SSL 私钥路径 (例: /etc/letsencrypt/live/example.com/privkey.pem): " SSL_KEY
+    PROTOCOL="https"
+else
+    PROTOCOL="http"
+fi
 
 INSTALL_PATH="${INSTALL_PATH/#\~/$HOME}"
 echo -e "${GREEN}项目路径: $INSTALL_PATH${NC}"
@@ -105,7 +115,7 @@ echo -e "${YELLOW}[5/8] 配置前端...${NC}"
 cd "$INSTALL_PATH/frontend"
 
 cat > .env.local << EOF
-NEXT_PUBLIC_API_URL=http://$SERVER_IP/api
+NEXT_PUBLIC_API_URL=${PROTOCOL}://${SERVER_DOMAIN}
 EOF
 
 if [ ! -d "node_modules" ]; then
@@ -138,7 +148,7 @@ Type=simple
 User=$ACTUAL_USER
 WorkingDirectory=$INSTALL_PATH/backend
 Environment="PATH=$(dirname $PYTHON_PATH):/usr/bin:/bin"
-ExecStart=$UVICORN_PATH app.main:app --host 0.0.0.0 --port 8000 --workers 2
+ExecStart=$UVICORN_PATH app.main:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=10
 
@@ -169,10 +179,31 @@ EOF
 
 # 8. 配置 Nginx
 echo -e "${YELLOW}[8/8] 配置 Nginx...${NC}"
-cat > /etc/nginx/sites-available/ppt-helper << EOF
+
+if [[ "$ENABLE_HTTPS" == "y" || "$ENABLE_HTTPS" == "Y" ]]; then
+    # HTTPS 配置
+    cat > /etc/nginx/sites-available/ppt-helper << EOF
+# HTTP 重定向到 HTTPS
 server {
     listen 80;
-    server_name $SERVER_IP;
+    server_name $SERVER_DOMAIN;
+    return 301 https://\$server_name\$request_uri;
+}
+
+# HTTPS 配置
+server {
+    listen 443 ssl http2;
+    server_name $SERVER_DOMAIN;
+
+    ssl_certificate $SSL_CERT;
+    ssl_certificate_key $SSL_KEY;
+    
+    # SSL 优化配置
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
 
     client_max_body_size 50M;
 
@@ -210,6 +241,50 @@ server {
     }
 }
 EOF
+else
+    # HTTP 配置
+    cat > /etc/nginx/sites-available/ppt-helper << EOF
+server {
+    listen 80;
+    server_name $SERVER_DOMAIN;
+
+    client_max_body_size 50M;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /api {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /docs {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+fi
 
 ln -sf /etc/nginx/sites-available/ppt-helper /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
@@ -237,8 +312,13 @@ systemctl status ppt-helper-backend --no-pager | head -n 5
 echo ""
 systemctl status ppt-helper-frontend --no-pager | head -n 5
 
-echo -e "\n${GREEN}访问地址: http://$SERVER_IP${NC}"
-echo -e "${GREEN}API 文档: http://$SERVER_IP:8000/docs${NC}\n"
+if [[ "$ENABLE_HTTPS" == "y" || "$ENABLE_HTTPS" == "Y" ]]; then
+    echo -e "\n${GREEN}访问地址: https://$SERVER_DOMAIN${NC}"
+    echo -e "${GREEN}API 文档: https://$SERVER_DOMAIN/docs${NC}\n"
+else
+    echo -e "\n${GREEN}访问地址: http://$SERVER_DOMAIN${NC}"
+    echo -e "${GREEN}API 文档: http://$SERVER_DOMAIN/docs${NC}\n"
+fi
 
 echo -e "${YELLOW}常用命令:${NC}"
 echo -e "  查看后端日志: ${GREEN}sudo journalctl -u ppt-helper-backend -f${NC}"
