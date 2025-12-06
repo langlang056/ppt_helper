@@ -2,7 +2,7 @@
 // This must be imported before any library that uses Promise.withResolvers
 
 if (typeof Promise.withResolvers === 'undefined') {
-  // @ts-expect-error polyfill
+  // @ts-ignore - Adding polyfill for Promise.withResolvers
   Promise.withResolvers = function <T>() {
     let resolve: (value: T | PromiseLike<T>) => void;
     let reject: (reason?: unknown) => void;
