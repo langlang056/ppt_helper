@@ -44,6 +44,9 @@ export default function ExplanationPanel() {
   // 轮询次数计数器，防止无限轮询
   const pollCountRef = useRef<number>(0);
   const MAX_POLL_COUNT = 60; // 最多轮询60次（2分钟）
+  // 用 ref 保存最新的 currentPage，避免闭包问题
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
 
   // 轮询处理进度（仅在处理中时轮询）
   useEffect(() => {
@@ -92,8 +95,13 @@ export default function ExplanationPanel() {
       // 检查缓存 - 如果有缓存且不是临时内容，直接返回
       const cached = explanations.get(currentPage);
       if (cached && !isTemporaryContent(cached.markdown_content)) {
-        // 缓存命中，直接返回
+        // 缓存命中且内容已完成，直接返回
         return;
+      }
+
+      // 如果缓存是临时内容，并且当前正在处理中，需要重新加载和轮询
+      if (cached && isTemporaryContent(cached.markdown_content) && processingStatus === 'processing') {
+        console.log(`🔄 第 ${currentPage} 页内容为临时内容，正在处理中，启动轮询...`);
       }
 
       // 设置加载标志
@@ -109,8 +117,9 @@ export default function ExplanationPanel() {
 
         // 如果返回的是临时内容，且当前页面在选中的处理列表中，启动轮询
         const isPageInSelectedList = selectedPages.length === 0 || selectedPages.includes(currentPage);
+        const pageToLoad = currentPage; // 保存当前要加载的页码
 
-        if (isTemporaryContent(explanation.markdown_content) && isPageInSelectedList && processingStatus === 'processing') {
+        if (isTemporaryContent(explanation.markdown_content) && isPageInSelectedList) {
           // 确保之前的轮询已清除
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -119,7 +128,19 @@ export default function ExplanationPanel() {
           // 重置轮询计数
           pollCountRef.current = 0;
 
+          console.log(`📡 开始轮询第 ${pageToLoad} 页的解释...`);
+
           pollIntervalRef.current = setInterval(async () => {
+            // 如果页面已切换，停止轮询
+            if (currentPageRef.current !== pageToLoad) {
+              console.log(`⏹️ 页面已切换，停止轮询第 ${pageToLoad} 页`);
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              return;
+            }
+
             // 检查轮询次数限制
             pollCountRef.current += 1;
             if (pollCountRef.current > MAX_POLL_COUNT) {
@@ -132,14 +153,20 @@ export default function ExplanationPanel() {
             }
 
             try {
-              const newExplanation = await getExplanation(pdfId, currentPage);
-              setExplanation(currentPage, newExplanation);
+              const newExplanation = await getExplanation(pdfId, pageToLoad);
 
-              // 如果不再是临时内容，停止轮询
-              if (!isTemporaryContent(newExplanation.markdown_content)) {
-                if (pollIntervalRef.current) {
-                  clearInterval(pollIntervalRef.current);
-                  pollIntervalRef.current = null;
+              // 只有当用户还在同一页时才更新
+              if (currentPageRef.current === pageToLoad) {
+                setExplanation(pageToLoad, newExplanation);
+                console.log(`🔄 第 ${pageToLoad} 页内容已更新`);
+
+                // 如果不再是临时内容，停止轮询
+                if (!isTemporaryContent(newExplanation.markdown_content)) {
+                  console.log(`✅ 第 ${pageToLoad} 页解释已完成，停止轮询`);
+                  if (pollIntervalRef.current) {
+                    clearInterval(pollIntervalRef.current);
+                    pollIntervalRef.current = null;
+                  }
                 }
               }
             } catch (error) {
@@ -172,7 +199,7 @@ export default function ExplanationPanel() {
         pollIntervalRef.current = null;
       }
     };
-  }, [pdfId, currentPage]); // 只依赖 pdfId 和 currentPage，移除 explanations 和 loadingPages
+  }, [pdfId, currentPage, processingStatus]); // 添加 processingStatus，当开始处理时重新加载
 
   // 下载处理
   const handleDownload = useCallback(async () => {

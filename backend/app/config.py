@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     supported_formats: list[str] = [".pdf"]
 
     # LLM Settings
-    max_tokens: int = 2000
+    max_tokens: int = 8192
     temperature: float = 0.7
 
     class Config:

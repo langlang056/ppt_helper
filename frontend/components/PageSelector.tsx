@@ -11,6 +11,7 @@ export default function PageSelector() {
   const [pageInput, setPageInput] = useState<string>('');
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConfirmed, setIsConfirmed] = useState(false); // 页码是否已确认
 
   if (!pdfId) return null;
 
@@ -43,7 +44,8 @@ export default function PageSelector() {
 
   const handleApplyPages = () => {
     setError(null);
-    
+    setIsConfirmed(false); // 重新应用页码时，重置确认状态
+
     if (!pageInput.trim()) {
       // 如果输入为空，选择所有页
       const allPages = Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -52,7 +54,7 @@ export default function PageSelector() {
     }
 
     const pages = parsePageInput(pageInput);
-    
+
     if (pages.length === 0) {
       setError('请输入有效的页码');
       return;
@@ -65,13 +67,30 @@ export default function PageSelector() {
     const allPages = Array.from({ length: totalPages }, (_, i) => i + 1);
     setSelectedPages(allPages);
     setPageInput(`1-${totalPages}`);
+    setIsConfirmed(false); // 重置确认状态
   };
 
   const handleClear = () => {
     setSelectedPages([]);
     setPageInput('');
+    setIsConfirmed(false); // 重置确认状态
   };
 
+  // 第一步：确认页码（更新右侧进度条显示）
+  const handleConfirmPages = () => {
+    if (selectedPages.length === 0) {
+      setError('请先选择要分析的页码');
+      return;
+    }
+
+    setError(null);
+    // 更新进度条显示（pending 状态，显示选中的页数）
+    setProgress('pending', 0, 0);
+    setIsConfirmed(true);
+    console.log('✅ 已确认页码:', selectedPages);
+  };
+
+  // 第二步：开始分析
   const handleStartProcessing = async () => {
     if (selectedPages.length === 0) {
       setError('请先选择要分析的页码');
@@ -109,14 +128,23 @@ export default function PageSelector() {
         // 其他错误才重置状态并显示
         setProgress('pending', 0, 0);
         setError(errorMessage);
+        setIsConfirmed(false); // 出错时重置确认状态
       }
     } finally {
       setIsStarting(false);
     }
   };
 
+  // 按钮点击处理：根据状态决定执行哪个操作
+  const handleButtonClick = () => {
+    if (!isConfirmed) {
+      handleConfirmPages();
+    } else {
+      handleStartProcessing();
+    }
+  };
+
   const isProcessing = processingStatus === 'processing';
-  const isCompleted = processingStatus === 'completed';
 
   return (
     <div className="border-b border-gray-200 bg-gradient-to-r from-white to-gray-50 p-4 shadow-sm">
@@ -155,11 +183,13 @@ export default function PageSelector() {
             清空
           </button>
           <button
-            onClick={handleStartProcessing}
+            onClick={handleButtonClick}
             disabled={selectedPages.length === 0 || isStarting || isProcessing}
             className={`px-5 py-2 rounded-md text-sm font-semibold transition-all shadow-sm ${
               selectedPages.length === 0 || isStarting || isProcessing
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : isConfirmed
+                ? 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-700 hover:to-green-800 hover:shadow-md'
                 : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 hover:shadow-md'
             }`}
           >
@@ -167,9 +197,9 @@ export default function PageSelector() {
               ? '启动中...'
               : isProcessing
               ? '分析中...'
-              : isCompleted
-              ? '继续分析'
-              : '开始分析'}
+              : isConfirmed
+              ? '开始分析'
+              : '确认页码'}
           </button>
         </div>
 
