@@ -457,6 +457,79 @@ async def get_pdf_info(pdf_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+@app.post("/api/chat/{pdf_id}")
+async def chat_with_ai(pdf_id: str, request: dict, db: AsyncSession = Depends(get_db)):
+    """
+    与 AI 进行对话（流式响应）
+
+    Request Body:
+    {
+        "question": "用户的问题",
+        "page_number": 1,
+        "context": "当前页面的解释内容",
+        "history": [{"role": "user", "content": "..."}, ...],
+        "llm_config": {"api_key": "...", "model": "..."}
+    }
+    """
+    # 验证 PDF 存在
+    pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
+    if not pdf_doc:
+        raise HTTPException(404, "PDF 未找到")
+
+    # 获取请求参数
+    question = request.get("question", "").strip()
+    if not question:
+        raise HTTPException(400, "请提供问题")
+
+    page_number = request.get("page_number", 1)
+    context = request.get("context", "")
+    history = request.get("history", [])
+    llm_config = request.get("llm_config", None)
+
+    # 验证 LLM 配置
+    if not llm_config or not llm_config.get("api_key"):
+        raise HTTPException(400, "请提供有效的 API Key")
+
+    model = llm_config.get("model", "gemini-2.5-flash")
+    if model not in ["gemini-2.5-flash", "gemini-2.5-pro"]:
+        raise HTTPException(400, f"不支持的模型: {model}")
+
+    # 创建 LLM 服务实例
+    current_llm = create_llm_service(
+        api_key=llm_config["api_key"],
+        model=model
+    )
+
+    async def generate_stream():
+        """生成 SSE 流"""
+        try:
+            async for chunk in current_llm.chat_stream(
+                question=question,
+                context=context,
+                history=history,
+                page_number=page_number,
+            ):
+                # SSE 格式
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
+
+            # 发送完成信号
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            print(f"❌ 聊天流生成错误: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        }
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=settings.debug)

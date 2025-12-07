@@ -8,6 +8,7 @@ import PdfViewer from '@/components/PdfViewer';
 import ExplanationPanel from '@/components/ExplanationPanel';
 import PageSelector from '@/components/PageSelector';
 import SettingsModal from '@/components/SettingsModal';
+import ChatBubble from '@/components/ChatBubble';
 
 export default function Home() {
   const { error, filename, pdfId } = usePdfStore();
@@ -73,9 +74,12 @@ export default function Home() {
       <footer className="border-t border-gray-200 bg-gradient-to-r from-gray-50 to-white px-6 py-2 shadow-inner">
         <div className="flex items-center justify-between text-xs text-gray-600">
           <span className="font-medium">智能课件讲解助手</span>
-          <span className="text-gray-500">后端: https://localhost:8000</span>
+          <span className="text-gray-500">v0.5.0</span>
         </div>
       </footer>
+
+      {/* AI 聊天悬浮球 */}
+      <ChatBubble />
     </div>
   );
 }

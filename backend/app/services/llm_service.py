@@ -2,8 +2,9 @@
 import google.generativeai as genai
 from app.config import get_settings
 from PIL import Image
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 from dataclasses import dataclass
+import asyncio
 
 settings = get_settings()
 
@@ -234,6 +235,79 @@ class GeminiService:
                 return f"## 第 {page_num} 页\n\n⚠️ 生成失败: {str(e)[:200]}"
         
         return f"## 第 {page_num} 页\n\n⚠️ 多次尝试后仍无法生成内容。"
+
+
+    async def chat_stream(
+        self,
+        question: str,
+        context: str,
+        history: List[dict],
+        page_number: int,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式聊天响应
+
+        Args:
+            question: 用户问题
+            context: 当前页面的解释内容（作为上下文）
+            history: 对话历史 [{"role": "user/assistant", "content": "..."}]
+            page_number: 当前页码
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+
+        Yields:
+            流式响应的文本片段
+        """
+        # 构建系统提示
+        system_prompt = f"""你是一个专业的课件讲解助手。用户正在阅读第 {page_number} 页的课件内容，下面是该页的详细讲解：
+
+---
+{context if context else "（该页暂无讲解内容）"}
+---
+
+请基于以上内容回答用户的问题。如果问题与当前页面内容相关，请结合上下文给出详细解答。
+如果问题超出当前页面范围，可以根据你的知识进行补充，但请说明这是额外补充的内容。
+请用清晰、易懂的中文回答，可以使用 Markdown 格式。"""
+
+        # 构建消息历史
+        messages = []
+
+        # 添加历史消息
+        for msg in history:
+            role = "user" if msg["role"] == "user" else "model"
+            messages.append({"role": role, "parts": [msg["content"]]})
+
+        # 添加当前问题
+        messages.append({"role": "user", "parts": [question]})
+
+        # 生成配置
+        config = genai.GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+
+        try:
+            # 使用 chat 模式
+            chat = self.model.start_chat(history=messages[:-1] if messages[:-1] else [])
+
+            # 流式生成
+            response = chat.send_message(
+                f"{system_prompt}\n\n用户问题：{question}",
+                generation_config=config,
+                safety_settings=SAFETY_SETTINGS,
+                stream=True,
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+                    await asyncio.sleep(0)  # 让出控制权
+
+        except Exception as e:
+            print(f"❌ 聊天流式响应错误: {str(e)}")
+            yield f"\n\n抱歉，发生错误：{str(e)}"
 
 
 # 全局单例（可选，向后兼容）
