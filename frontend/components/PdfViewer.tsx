@@ -3,7 +3,7 @@
 // Polyfill must be imported first
 import '@/lib/polyfills';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -19,6 +19,13 @@ export default function PdfViewer() {
   const [numPages, setNumPages] = useState<number>(0);
   const [pageWidth, setPageWidth] = useState<number | undefined>(undefined);
   const [pageHeight, setPageHeight] = useState<number | undefined>(undefined);
+  const [inputPage, setInputPage] = useState<string>(String(currentPage));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 同步 inputPage 与 currentPage
+  useEffect(() => {
+    setInputPage(String(currentPage));
+  }, [currentPage]);
 
   useEffect(() => {
     const updateSize = () => {
@@ -72,6 +79,28 @@ export default function PdfViewer() {
     }
   };
 
+  // 页码跳转
+  const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputPage(e.target.value);
+  };
+
+  const handlePageInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      goToPage();
+    }
+  };
+
+  const goToPage = () => {
+    const pageNum = parseInt(inputPage, 10);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+      setCurrentPage(pageNum);
+      inputRef.current?.blur();
+    } else {
+      // 恢复为当前页码
+      setInputPage(String(currentPage));
+    }
+  };
+
   if (!pdfFile) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -92,9 +121,18 @@ export default function PdfViewer() {
           >
             上一页
           </button>
-          <span className="text-sm font-semibold text-gray-700 min-w-[70px] text-center">
-            {currentPage} / {totalPages}
-          </span>
+          <div className="flex items-center gap-1">
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputPage}
+              onChange={handlePageInputChange}
+              onKeyDown={handlePageInputKeyDown}
+              onBlur={goToPage}
+              className="w-12 px-2 py-1 text-sm text-center border border-gray-300 rounded focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-500">/ {totalPages}</span>
+          </div>
           <button
             onClick={goToNextPage}
             disabled={currentPage >= totalPages}

@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { usePdfStore } from '@/store/pdfStore';
-import { getExplanation, getProgress, downloadMarkdown } from '@/lib/api';
+import { useSettingsStore } from '@/store/settingsStore';
+import { getExplanation, getProgress, downloadMarkdown, clearPageCache, startProcessing } from '@/lib/api';
 
 // 判断内容是否是临时的"正在生成中"内容
 const isTemporaryContent = (content: string) => {
@@ -52,6 +53,11 @@ export default function ExplanationPanel() {
     setPageLoading,
     setPageError,
   } = usePdfStore();
+
+  const { apiKey, model } = useSettingsStore();
+
+  // 重新分析状态
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
 
   // 计算显示用的总页数：如果有选择页面，使用选择的页数；否则使用总页数
   const displayTotalPages = selectedPages.length > 0 ? selectedPages.length : totalPages;
@@ -225,7 +231,7 @@ export default function ExplanationPanel() {
   // 下载处理
   const handleDownload = useCallback(async () => {
     if (!pdfId || !filename) return;
-    
+
     try {
       await downloadMarkdown(pdfId, filename.replace('.pdf', ''));
     } catch (error: any) {
@@ -233,6 +239,43 @@ export default function ExplanationPanel() {
       alert(error.response?.data?.detail || '下载失败');
     }
   }, [pdfId, filename]);
+
+  // 重新分析当前页
+  const handleReanalyze = useCallback(async () => {
+    if (!pdfId || !apiKey) {
+      alert('请先配置 API Key');
+      return;
+    }
+
+    if (isReanalyzing) return;
+
+    try {
+      setIsReanalyzing(true);
+
+      // 1. 清除当前页的缓存
+      await clearPageCache(pdfId, [currentPage]);
+
+      // 2. 清除前端缓存的解释
+      setExplanation(currentPage, {
+        page_number: currentPage,
+        markdown_content: '⏳ **正在重新生成中...**\n\n正在分析页面内容，请稍候...',
+        summary: ''
+      });
+
+      // 3. 重新启动处理
+      await startProcessing(pdfId, [currentPage], { api_key: apiKey, model });
+
+      // 4. 更新处理状态，触发轮询
+      setProgress('processing', 0, 0);
+
+      console.log(`🔄 已启动重新分析第 ${currentPage} 页`);
+    } catch (error: any) {
+      console.error('重新分析失败:', error);
+      alert(error.response?.data?.detail || '重新分析失败');
+    } finally {
+      setIsReanalyzing(false);
+    }
+  }, [pdfId, currentPage, apiKey, model, isReanalyzing, setExplanation, setProgress]);
 
   const currentExplanation = explanations.get(currentPage);
   const isLoadingCurrentPage = loadingPages.has(currentPage);
@@ -309,11 +352,23 @@ export default function ExplanationPanel() {
           </div>
         ) : currentExplanation ? (
           <div className="prose prose-base max-w-none">
-            {/* 页码标签 */}
-            <div className="mb-6">
+            {/* 页码标签和重新分析按钮 */}
+            <div className="mb-6 flex items-center justify-between">
               <span className="px-4 py-2 text-sm font-semibold border-2 border-gray-800 bg-white shadow-md rounded-md">
                 第 {currentExplanation.page_number} 页
               </span>
+              <button
+                onClick={handleReanalyze}
+                disabled={isReanalyzing || processingStatus === 'processing' || !apiKey}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  isReanalyzing || processingStatus === 'processing' || !apiKey
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm hover:shadow-md'
+                }`}
+                title={!apiKey ? '请先配置 API Key' : '清除缓存并重新分析此页'}
+              >
+                {isReanalyzing ? '⏳ 重新分析中...' : '🔄 重新分析'}
+              </button>
             </div>
 
             {/* Markdown 内容渲染 */}

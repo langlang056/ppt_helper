@@ -457,6 +457,39 @@ async def get_pdf_info(pdf_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+@app.delete("/api/cache/{pdf_id}")
+async def delete_page_cache(pdf_id: str, request: dict, db: AsyncSession = Depends(get_db)):
+    """
+    删除指定页面的缓存，以便重新分析
+
+    Request Body:
+    {
+        "page_numbers": [1, 2, 3]
+    }
+    """
+    pdf_doc = await cache_service.get_pdf_metadata(db, pdf_id)
+    if not pdf_doc:
+        raise HTTPException(404, "PDF 未找到")
+
+    page_numbers = request.get("page_numbers", [])
+    if not page_numbers:
+        raise HTTPException(400, "请提供要清除缓存的页码列表")
+
+    # 验证页码
+    invalid_pages = [p for p in page_numbers if p < 1 or p > pdf_doc.total_pages]
+    if invalid_pages:
+        raise HTTPException(400, f"页码无效: {invalid_pages}，有效范围: 1-{pdf_doc.total_pages}")
+
+    # 删除缓存
+    deleted_count = await cache_service.delete_page_cache(db, pdf_id, page_numbers)
+
+    return {
+        "message": f"已清除 {deleted_count} 页缓存",
+        "deleted_pages": page_numbers,
+        "deleted_count": deleted_count
+    }
+
+
 @app.post("/api/chat/{pdf_id}")
 async def chat_with_ai(pdf_id: str, request: dict, db: AsyncSession = Depends(get_db)):
     """

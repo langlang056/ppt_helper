@@ -160,6 +160,19 @@ export async function downloadMarkdown(pdfId: string, filename: string): Promise
 }
 
 /**
+ * 清除指定页面的缓存
+ */
+export async function clearPageCache(
+  pdfId: string,
+  pageNumbers: number[]
+): Promise<{ deleted_count: number }> {
+  const response = await api.delete(`/api/cache/${pdfId}`, {
+    data: { page_numbers: pageNumbers },
+  });
+  return response.data;
+}
+
+/**
  * 健康检查
  */
 export async function healthCheck(): Promise<boolean> {

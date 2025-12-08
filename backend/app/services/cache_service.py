@@ -1,7 +1,7 @@
 """Caching service to avoid redundant LLM calls."""
 import json
 from typing import List, Optional
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import PageExplanationCache, PDFDocument
 from app.models.schemas import PageExplanation, PageExplanationMarkdown
@@ -199,6 +199,29 @@ class CacheService:
         stmt = select(PDFDocument).where(PDFDocument.id == pdf_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def delete_page_cache(
+        db: AsyncSession, pdf_id: str, page_numbers: List[int]
+    ) -> int:
+        """
+        Delete cached explanations for specific pages.
+
+        Args:
+            db: Database session
+            pdf_id: PDF identifier
+            page_numbers: List of page numbers to delete cache for
+
+        Returns:
+            Number of deleted cache entries
+        """
+        stmt = delete(PageExplanationCache).where(
+            PageExplanationCache.pdf_id == pdf_id,
+            PageExplanationCache.page_number.in_(page_numbers)
+        )
+        result = await db.execute(stmt)
+        await db.commit()
+        return result.rowcount
 
 
 cache_service = CacheService()
