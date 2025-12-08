@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 
 export const metadata: Metadata = {
   title: "UniTutor AI - 智能课件讲解助手",

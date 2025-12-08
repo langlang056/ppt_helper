@@ -3,14 +3,35 @@
 import { useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { usePdfStore } from '@/store/pdfStore';
 import { getExplanation, getProgress, downloadMarkdown } from '@/lib/api';
 
 // 判断内容是否是临时的"正在生成中"内容
 const isTemporaryContent = (content: string) => {
-  return content.includes('正在生成中') || 
+  return content.includes('正在生成中') ||
          content.includes('正在后台处理') ||
          content.includes('⏳');
+};
+
+// 修复未正确包裹的 LaTeX 块级公式
+const fixLatexBlocks = (content: string): string => {
+  // 匹配未被 $$ 包裹的 \begin{...}...\end{...} 块
+  // 支持 align, align*, aligned, equation, equation*, gather, gather* 等环境
+  const envNames = ['align', 'align\\*', 'aligned', 'equation', 'equation\\*', 'gather', 'gather\\*', 'split', 'cases'];
+  const envPattern = envNames.join('|');
+
+  // 正则匹配：不在 $$ 内的 \begin{env}...\end{env}
+  const regex = new RegExp(
+    `(?<!\\$\\$\\s*)\\\\begin\\{(${envPattern})\\}([\\s\\S]*?)\\\\end\\{\\1\\}(?!\\s*\\$\\$)`,
+    'g'
+  );
+
+  return content.replace(regex, (_match, env, inner) => {
+    // 用 $$ 包裹未包裹的 LaTeX 环境
+    return `$$\n\\begin{${env}}${inner}\\end{${env}}\n$$`;
+  });
 };
 
 export default function ExplanationPanel() {
@@ -297,7 +318,8 @@ export default function ExplanationPanel() {
 
             {/* Markdown 内容渲染 */}
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex]}
               components={{
                 // 自定义标题样式 - 增大字体
                 h1: ({ children }) => (
@@ -341,7 +363,7 @@ export default function ExplanationPanel() {
                 ),
               }}
             >
-              {currentExplanation.markdown_content}
+              {fixLatexBlocks(currentExplanation.markdown_content)}
             </ReactMarkdown>
           </div>
         ) : (

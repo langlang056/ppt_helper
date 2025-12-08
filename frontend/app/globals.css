@@ -73,6 +73,62 @@
   @apply border-l-4 border-gray-400 pl-4 italic text-gray-700 my-4 bg-gray-50 py-2;
 }
 
+/* KaTeX 公式样式 - 保持原生 LaTeX 渲染效果 */
+.katex {
+  font-size: 1.1em !important;
+  color: #000000 !important;
+}
+
+/* 块级公式容器 */
+.katex-display {
+  @apply my-6 py-4 overflow-x-auto;
+  display: block !important;
+  text-align: center !important;
+}
+
+.katex-display > .katex {
+  display: inline-block !important;
+  text-align: left !important;
+}
+
+/* 确保 KaTeX 字体正确加载，不被 Tailwind 覆盖 */
+.katex,
+.katex * {
+  font-family: KaTeX_Main, "Times New Roman", serif !important;
+  border: none !important;
+}
+
+.katex .katex-mathml {
+  position: absolute;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 0;
+  border: 0;
+  height: 1px;
+  width: 1px;
+  overflow: hidden;
+}
+
+/* 保护 KaTeX 内部样式不被覆盖 */
+.prose .katex,
+.prose .katex * {
+  background-color: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* 块级公式的外层容器样式 */
+.prose .katex-display {
+  @apply bg-gray-50 rounded-lg border border-gray-200;
+  padding: 1rem 1.5rem !important;
+  margin: 1.5rem 0 !important;
+}
+
+/* 行内公式样式 */
+.prose p .katex {
+  padding: 0 0.1em !important;
+}
+
 /* 高级滚动条样式 */
 ::-webkit-scrollbar {
   width: 10px;
