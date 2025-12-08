@@ -273,13 +273,25 @@ async def start_processing(
 
     # 获取 LLM 配置（可选）
     llm_config = request.get("llm_config", None)
-    if llm_config:
-        # 验证 LLM 配置
+    
+    if not llm_config or not llm_config.get("api_key"):
+        # 用户未提供 API Key,使用默认配置
+        if not settings.default_api_key:
+            raise HTTPException(500, "系统未配置默认 API Key,请联系管理员或提供您的 API Key")
+        
+        llm_config = {
+            "api_key": settings.default_api_key,
+            "model": settings.default_model,  # 固定使用 Flash 模型
+        }
+        print(f"🎁 使用默认 API Key (模型: {settings.default_model})")
+    else:
+        # 用户提供了自己的 API Key,验证配置
         if not llm_config.get("api_key"):
             raise HTTPException(400, "请提供有效的 API Key")
         model = llm_config.get("model", "gemini-2.5-flash")
         if model not in ["gemini-2.5-flash", "gemini-2.5-pro"]:
             raise HTTPException(400, f"不支持的模型: {model}")
+        print(f"🔑 使用用户 API Key (模型: {model})")
 
     # 验证页码
     total_pages = pdf_doc.total_pages
