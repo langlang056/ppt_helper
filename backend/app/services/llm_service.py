@@ -159,7 +159,7 @@ class GeminiService:
         page_num: int,
         previous_summaries: Optional[List[str]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 8192,
+        max_tokens: int = 50000,
     ) -> str:
         """分析图像并生成Markdown格式解释"""
         
@@ -261,7 +261,7 @@ class GeminiService:
         history: List[dict],
         page_number: int,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 50000,
     ) -> AsyncGenerator[str, None]:
         """
         流式聊天响应

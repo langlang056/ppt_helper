@@ -131,8 +131,8 @@ async def process_pdf_background(
                     image=page_image,
                     page_num=page_number,
                     previous_summaries=previous_summaries,
-                    temperature=0.7,
-                    max_tokens=4000,
+                    temperature=settings.temperature,
+                    max_tokens=settings.max_tokens,
                 )
 
                 # 提取摘要
