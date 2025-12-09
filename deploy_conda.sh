@@ -97,6 +97,9 @@ fi
 # 创建 .env 文件
 cat > .env << EOF
 GOOGLE_API_KEY=$GEMINI_API_KEY
+GOOGLE_MODEL=gemini-2.0-flash-exp
+DEFAULT_API_KEY=$GEMINI_API_KEY
+DEFAULT_MODEL=gemini-2.0-flash-exp
 HOST=0.0.0.0
 PORT=8000
 DEBUG=false
@@ -256,6 +259,7 @@ server {
         proxy_read_timeout 60s;
     }
 
+    # 后端 API（支持 SSE 流式响应）
     location /api {
         proxy_pass http://localhost:8000;
         proxy_http_version 1.1;
@@ -266,6 +270,13 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # SSE 流式响应优化
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header X-Accel-Buffering no;
+        chunked_transfer_encoding on;
+        
         proxy_connect_timeout 120s;
         proxy_send_timeout 120s;
         proxy_read_timeout 120s;
@@ -340,6 +351,7 @@ server {
         proxy_read_timeout 60s;
     }
 
+    # 后端 API（支持 SSE 流式响应）
     location /api {
         proxy_pass http://localhost:8000;
         proxy_http_version 1.1;
@@ -350,6 +362,13 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # SSE 流式响应优化
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header X-Accel-Buffering no;
+        chunked_transfer_encoding on;
+        
         proxy_connect_timeout 120s;
         proxy_send_timeout 120s;
         proxy_read_timeout 120s;
