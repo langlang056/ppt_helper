@@ -10,8 +10,9 @@ settings = get_settings()
 
 # 支持的模型列表
 SUPPORTED_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    "gemini-2.0-flash-exp",  # 默认免费模型
+    "gemini-2.5-flash",      # 用户自定义模型
+    "gemini-2.5-pro",        # 用户自定义模型
 ]
 
 # 安全设置：禁用所有过滤器（学术内容）
